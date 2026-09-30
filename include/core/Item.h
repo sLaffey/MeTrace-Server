@@ -36,10 +36,10 @@ private:
 
     Item() = default;
 
-    
-
 public:
     ~Item() = default;
+
+    bool operator == (const Item& a) const;
 
     // set and get methods
     // void setTitle(const std::string& _title) { title = _title; }
