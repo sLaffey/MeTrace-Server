@@ -9,6 +9,7 @@
 #include <httplib.h>
 
 #include "service/DataBase.h"
+#include "http/Router.h"
 
 namespace {
 
@@ -153,17 +154,18 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    db.save(dbPath);
+    // db.save(dbPath);
 
-    // httplib::Server server;
-    // // metrace::http::registerRoutes(server);
+    httplib::Server server;
+    metrace::http::registerRoutes(server, db);
 
-    // std::cout << "MeTrace-Server 已启动: http://" << options.host << ":" << options.port
-    //           << "  (db: " << dbPath.string() << ")" << std::endl;
+    std::cout << "MeTrace-Server 已启动: http://" << options.host << ":" << options.port
+              << "  (db: " << dbPath.string() << ")" << std::endl;
 
-    // if (!server.listen(options.host, options.port)) {
-    //     std::cerr << "监听 " << options.host << ":" << options.port << " 失败" << std::endl;
-    //     return 1;
-    // }
+    if (!server.listen(options.host, options.port)) {
+        std::cerr << "监听 " << options.host << ":" << options.port << " 失败" << std::endl;
+        return 1;
+    }
+
     return 0;
 }
