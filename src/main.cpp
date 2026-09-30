@@ -14,7 +14,7 @@ namespace {
 
 constexpr const char* kDefaultHost = "127.0.0.1";
 constexpr int kDefaultPort = 8000;
-constexpr const char* kDefaultDbPath = "./data/metrace.db";
+constexpr const char* kDefaultDbPath = "./data/metrace.json";
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
@@ -145,24 +145,25 @@ int main(int argc, char** argv)
     if (!ensureParentDirectory(dbPath)) {
         return 1;
     }
+    
+    metrace::service::DataBase db;
 
-    // 开库。必须在 listen 之前完成，之后就是只读了。
-    try {
-        metrace::service::DataBase db(dbPath.string());
-    } catch (const std::exception& e) {
-        std::cerr << "打开数据库失败 '" << dbPath.string() << "': " << e.what() << std::endl;
+    if (!db.load(dbPath.string())) {
+        std::cerr << "Failed to load database. Aborted." << std::endl;
         return 1;
     }
 
-    httplib::Server server;
-    // metrace::http::registerRoutes(server);
+    db.save(dbPath);
 
-    std::cout << "MeTrace-Server 已启动: http://" << options.host << ":" << options.port
-              << "  (db: " << dbPath.string() << ")" << std::endl;
+    // httplib::Server server;
+    // // metrace::http::registerRoutes(server);
 
-    if (!server.listen(options.host, options.port)) {
-        std::cerr << "监听 " << options.host << ":" << options.port << " 失败" << std::endl;
-        return 1;
-    }
+    // std::cout << "MeTrace-Server 已启动: http://" << options.host << ":" << options.port
+    //           << "  (db: " << dbPath.string() << ")" << std::endl;
+
+    // if (!server.listen(options.host, options.port)) {
+    //     std::cerr << "监听 " << options.host << ":" << options.port << " 失败" << std::endl;
+    //     return 1;
+    // }
     return 0;
 }

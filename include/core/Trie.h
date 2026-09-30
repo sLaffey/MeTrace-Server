@@ -10,6 +10,17 @@ private:
         int cnt_next = 0;
         Node *next[256] = {nullptr};
 
+        Node() = default;
+        Node(const Node&) = delete; // 防止浅拷贝带来的问题
+
+        ~Node() {
+            for (Node* child : next) {
+                if (child != nullptr) {
+                    delete child;
+                }
+            }
+        }
+
         bool empty() const {
             return !(is_word || cnt_next);
         }
@@ -31,6 +42,7 @@ private:
 public:
     Trie() = default;
     ~Trie() = default;
+    Trie(const Trie&) = delete; // 防止浅拷贝带来的问题
 
     void insert(const std::string& s);
     void remove(const std::string& s);
