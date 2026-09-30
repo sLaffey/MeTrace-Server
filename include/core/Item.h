@@ -43,10 +43,15 @@ public:
     bool operator == (const Item& a) const;
 
     // set and get methods
-    // void setTitle(const std::string& _title) { title = _title; }
-    // void setScore(int _score) { score = _score; }
-    // void setComment(const std::string& _comment) { comment = _comment; }
-    // void setType(ItemType _type) { type = _type; }
+    void setType(std::string _type) { type = _type; }
+    void setTitle(const std::string& _title) { title = _title; }
+    void setAuthor(const std::string& _author) { author = _author; }
+    void setDescription(const std::string& _description) { description = _description; }
+    void setDate(const std::string& _date) { date = _date; }
+    void setProgress(const double _progress) { progress = _progress; }
+    void setScore(const int _score) { score = _score; }
+    void setComment(const std::string& _comment) { comment = _comment; }
+    void setTags(const std::vector<Tag>& _tags) { tags = _tags; }
 
     int getId() const { return id; }
     // const std::string& getTitle() const { return title; }

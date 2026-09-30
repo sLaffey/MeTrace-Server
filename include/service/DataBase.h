@@ -1,6 +1,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <optional>
 
 #include "core/LinkedList.h"
 #include "core/Item.h"
@@ -18,12 +19,20 @@ class DataBase {
 
 public:
     DataBase() = default;
+    DataBase(const DataBase&) = delete;
     ~DataBase() = default;
 
     DataBase(const std::string& dbPath);
 
     bool save(const std::string& dbPath) const;
     bool load(const std::string& dbPath);
+
+    const metrace::core::Item& getItem(int id) const;
+    bool updateItem(int id, const metrace::core::Item& patch);
+    bool removeItem(int id);
+    bool createItem(const metrace::core::Item& item);
+
+    std::optional<metrace::core::Tag> createTag(const metrace::core::Tag& name);
 };
 
 } // namespace metrace::service
