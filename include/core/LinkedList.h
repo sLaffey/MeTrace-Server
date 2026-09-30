@@ -49,6 +49,15 @@ public:
         }
         return false;
     }
+
+    /// @brief 遍历链表的所有元素，对其调用 func(item)
+    /// @param func 
+    void forEach(const std::function<void (const T&)>& func) const
+    {
+        for (Node* cur = head; cur != nullptr; cur = cur->next) {
+            func(cur->data);
+        }
+    }
 };
 
 } // namespace metrace::core
