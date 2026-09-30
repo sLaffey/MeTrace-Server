@@ -51,20 +51,14 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_Declare(
-    SQLiteCpp
-    GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git
-    GIT_TAG        3.4.0
-)
-
-FetchContent_MakeAvailable(httplib nlohmann_json SQLiteCpp)
+FetchContent_MakeAvailable(httplib nlohmann_json)
 
 # httplib 在 Linux 上依赖 pthread
 find_package(Threads REQUIRED)
 
 # ---------- 目标 ----------
-# 自动收集 src/ 下的所有源文件：以后新增 db/xxxRepository.cpp、service/xxxService.cpp
-# 之类文件无需再改这里。CONFIGURE_DEPENDS 保证增删文件后重新构建会自动重新运行 cmake。
+# 自动收集 src/ 下的所有源文件
+# 新增文件无需再改这里。CONFIGURE_DEPENDS 保证增删文件后重新构建会自动重新运行 cmake。
 file(GLOB_RECURSE METRACE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
 )
@@ -83,7 +77,6 @@ target_link_libraries(
         httplib::httplib
         nlohmann_json::nlohmann_json
         Threads::Threads
-        SQLiteCpp
 )
 
 # 编译告警

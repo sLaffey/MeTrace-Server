@@ -1,6 +1,6 @@
 #!/bin/bash
 # 配置并编译 MeTrace-Server。
-# 注意：首次执行需要联网，FetchContent 会把三个依赖拉到 build/_deps/ 下并缓存起来。
+# 注意：首次执行需要联网，FetchContent 会把依赖拉到 build/_deps/ 下并缓存起来。
 set -e
 cd "$(dirname "$0")/.."
 
