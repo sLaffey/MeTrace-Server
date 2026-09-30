@@ -47,6 +47,7 @@ public:
     // void setComment(const std::string& _comment) { comment = _comment; }
     // void setType(ItemType _type) { type = _type; }
 
+    int getId() const { return id; }
     // const std::string& getTitle() const { return title; }
     // const int getScore() const { return score; }
     // const std::string& getComment() const { return comment; }

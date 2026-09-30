@@ -7,7 +7,7 @@ nlohmann::json Item::toJson() const {
     j["type"] = type;
     j["title"] = title;
     j["author"] = author;
-    j["description"] = j["description"];
+    j["description"] = description;
     j["date"] = date;
     j["progress"] = progress;
     j["score"] = score;

@@ -132,7 +132,7 @@ Item 的 JSON 序列化（`toJson`/`fromJson`）放在 core 层，可依赖 nloh
 
 ## 5. 数据存储设计
 
-### 5.1 存储文件格式
+### 5.1 存储文件格式 TODO
 
 单个 JSON 文件（默认 `./data/metrace.json`），启动时全量读入，写操作成功后全量覆写：
 
