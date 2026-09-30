@@ -2,7 +2,15 @@
 
 namespace metrace::core {
 
-nlohmann::json Item::toJson() const {
+/// @brief 仅通过 id 判断条目是否相等
+/// @param item 
+bool Item::operator == (const Item& item) const
+{
+    return id == item.getId();
+}
+
+nlohmann::json Item::toJson() const
+{
     nlohmann::json j;
     j["type"] = type;
     j["title"] = title;
@@ -18,7 +26,8 @@ nlohmann::json Item::toJson() const {
     return j;
 }
 
-Item Item::fromJson(const nlohmann::json& j) {
+Item Item::fromJson(const nlohmann::json& j)
+{
     Item item;
     item.type = j["type"].get<std::string>();
     item.title = j["title"].get<std::string>();

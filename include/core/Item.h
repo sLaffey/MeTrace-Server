@@ -37,6 +37,7 @@ private:
     Item() = default;
 
 public:
+    // Item(const Item&) = delete;
     ~Item() = default;
 
     bool operator == (const Item& a) const;
