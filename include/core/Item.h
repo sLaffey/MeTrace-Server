@@ -28,7 +28,7 @@ private:
     std::string description;        // 条目简介
     std::string date;               // 条目发布日期 TODO: 定义成单独的类
     double progress;                // 条目观看进度
-    int score;                      // 条目评分 [1-100]
+    int score;                      // 条目评分 [1-100] Item 类不负责校验
     std::string comment;            // 条目评论
     std::vector<Tag> tags;          // 条目标签
     std::string created_at;         // 条目创建时间
@@ -54,10 +54,14 @@ public:
     void setTags(const std::vector<Tag>& _tags) { tags = _tags; }
 
     int getId() const { return id; }
-    // const std::string& getTitle() const { return title; }
-    // const int getScore() const { return score; }
-    // const std::string& getComment() const { return comment; }
-    // const ItemType getType() const { return type; }
+    const std::string& getType() const { return type; }
+    const std::string& getAuthor() const { return author; }
+    const std::string& getDescription() const { return description; }
+    const std::string& getDate() const { return date; }
+    double getProgress() const { return progress; }
+    int getScore() const { return score; }
+    const std::string& getComment() { return comment; }
+    const std::vector<Tag>& getTags() { return tags; }
 
     // JSON serialization and deserialization
     nlohmann::json toJson() const;
