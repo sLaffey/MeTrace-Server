@@ -1,7 +1,5 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
-
 #include <string>
 #include <optional>
 
@@ -9,6 +7,7 @@
 #include "core/Item.h"
 #include "core/Tag.h"
 #include "core/Trie.h"
+#include "core/Heap.h"
 
 namespace metrace::service {
 
@@ -36,5 +35,7 @@ public:
 
     std::optional<metrace::core::Tag> createTag(const metrace::core::Tag& name);
 };
+
+
 
 } // namespace metrace::service

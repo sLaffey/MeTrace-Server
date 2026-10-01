@@ -79,6 +79,8 @@ public:
         return false;
     }
 
+    /// @brief 弹出堆顶元素
+    /// @return 堆顶元素
     T pop() {
         if (size == 0) throw std::out_of_range("Heap is empty");
         T topValue = data[0];

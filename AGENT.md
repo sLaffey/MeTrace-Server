@@ -1,6 +1,7 @@
 # AGENT.md — 书影音迹 MeTrace（MeTrace-Server）服务端开发指南
 
-> 本文件是项目的开发指南与需求基线，供两位开发者（以及辅助开发的 AI Agent）共同遵循。
+> 本文件是项目的开发指南与需求基线，供两位开发者以及任何后续接手的 AI Agent 共同遵循。
+> 接手开发的 Agent 请先读 §3「现状快照」定位进度，再按 §13 任务清单继续；**已定型的设计决策（§3.3）不要推翻重议**，有疑问先读对应章节的设计理由。
 > 接口路径、数据模型、数据结构要求以本文档为准；**新增接口或修改字段前，先更新本文档，再写代码**。
 
 ---
@@ -10,12 +11,11 @@
 - **项目名**：MeTrace（书影音迹），仓库 `MeTrace-Server`（CMake 工程同名，可执行文件 `server`，产物在 `build/bin/server`）
 - **全称**：个人书影音追踪与智能推荐系统
 - **架构**：C/S 架构。服务端纯 C++ 实现，客户端 GUI 通过 HTTP + JSON 通信
-- **服务端职责**：接收 HTTP 请求 → 在内存数据结构上执行业务与算法 → 返回 JSON；数据持久化采用**本地单个 JSON 文件**（启动全量加载，写操作后全量落盘）
+- **服务端职责**：接收 HTTP 请求 → 在内存数据结构上执行业务与算法 → 返回 JSON；数据持久化采用**本地单个 JSON 文件**（启动全量加载，写操作后全量原子落盘）
 - **课设定位**：《计算机科学与工程程序设计实践》数据结构与算法课设，**重心是数据结构与算法本身，而非工程化**：
   - 两人合作，人均代码量 ≥ 500 行，每人都要有能现场讲解的手写数据结构与算法
-  - 至少 2 种手写数据结构（本项目计划 4~5 种，见 §8）
-  - GUI 客户端、C/S 通信
-  - 所有代码必须能现场解释
+  - 手写结构：链表、Trie、堆、哈希表、双栈、推荐算法（见 §9）
+  - GUI 客户端、C/S 通信；所有代码必须能现场解释；能 10 行解决的绝不写 30 行
 
 ---
 
@@ -26,513 +26,429 @@
 | 语言 | C++17 |
 | HTTP 服务 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) v0.57.1（header-only） |
 | JSON | [nlohmann/json](https://github.com/nlohmann/json) v3.12.0（header-only） |
-| 构建 | CMake ≥ 3.22.1（`CMakeLists.txt` 中已写死此下限） |
-| 编译器 | GCC ≥ 9 / Clang ≥ 10 / MSVC 2019+ |
-| 平台 | Linux / macOS / Windows（优先 Linux） |
-| 测试 | `tests/test_api.sh`（curl 断言）+ core 结构的简单 assert 程序 |
+| 构建 | CMake ≥ 3.22.1（开发机 Linux + GCC） |
+| 测试 | `tests/test_api.sh`（curl 断言）+ core 结构的简单 assert 程序（不引框架） |
 
-> 依赖由 CMake `FetchContent` 拉取源码并锁定版本，**不需要系统预装**，也不需要 `third_party/` 目录。
->
-> ⚠️ **离线演示注意**：首次 `cmake` configure 需要联网，依赖缓存到 `build/_deps/`。
-> 演示前先在目标机器跑通一次构建，之后**不要删除 `build/`**。
+依赖由 CMake `FetchContent` 拉取源码并锁定版本，不需要系统预装。SQLiteCpp 已移除，**不要重新引入任何数据库依赖**（见 §17）。
+
+> ⚠️ **离线演示注意**：首次 `cmake` configure 需要联网，依赖缓存到 `build/_deps/`。演示前先跑通一次构建，之后不要删除 `build/`。
 
 ---
 
-## 3. 目录结构
+## 3. 现状快照（2026-10-01）
+
+### 3.1 已完成
+
+- [x] CMake 清理：仅 FetchContent httplib + nlohmann_json；产物 `build/bin/server`
+- [x] 全部头文件均有 `#pragma once`（铁律：头文件第一行，新文件当天加）
+- [x] `src/main.cpp`：参数/环境变量解析、`db.load()` fail-fast → `db.save()`；HTTP 启动段随 Router 完成度打开
+- [x] 数据模型定稿（`include/core/Item.h` 为权威，见 §7）：type 为字符串、score 为 int [1-100]、`Tag` 为 `std::string` 别名
+- [x] `LinkedList`：insert（头插）/ remove（按 operator==，即按 id）
+- [x] `Trie`：insert / query / remove（`removeRec` 递归释放空节点方案已定）
+- [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删
+- [x] `DataBase::load`：全量加载 items / tags / next_id
+- [x] `http/Router` 骨架起步（`/`、部分 `/api/items`）
+
+### 3.2 待办（按优先级，展开见 §13）
+
+1. Item 补口子：恢复用户字段 setter、`toJson/fromJson` 覆盖 12 字段、服务端字段（id/时间戳）写入口子（`friend class DataBase`）、`touch()`
+2. LinkedList 补齐：`forEach` / `find` / `clear` / `size`；**删除拷贝**（三法则）
+3. Trie 修缮：`next[128]`→`[256]`、下标统一 `unsigned char`、Node 递归析构、删拷贝
+4. DataBase 核心：`std::mutex`、`ItemQuery/SortField/ListResult`、CRUD 方法（**listItems 含 Top-N 堆，从 Router.cpp 挪入**）、save 原子写
+5. Router 收口：调用 `db.listItems` 替换本地堆逻辑；include 卫生（§5.3）
+6. HashTable 实现并接入 getItem/updateItem/deleteItem（id → `Item*` 索引）
+7. 撤销/重做（UndoStack）、推荐（Recommender）
+8. 杂项：确认 `.gitignore` 覆盖 `data/`；`test_api.sh` 字段适配
+
+### 3.3 已定型、不要重新讨论的设计决策
+
+| 决策 | 内容 | 理由速查 |
+|---|---|---|
+| 分层边界 | 过滤/排序/分页等**数据语义**在 DataBase；参数解析/状态码/JSON 形状等**协议语义**在 Router | 锁边界（§5.2）+ 可测试性（§12） |
+| listItems 交接 | 返回 `ListResult{total, vector<const Item*>}`（领域对象），Router 负责序列化 | db 接口不含 json 类型，依赖图干净（§5.3） |
+| id 管理 | 服务端 `next_id` 分配器；加载时 `next_id = max(文件值, max_id+1)`；撤销重插用旧 id | 防重发、防手工 JSON 缺字段 |
+| 判等 | `Item::operator==` 按 id；内容哈希摘要方案已否决 | 身份走 id 即够，规模小 |
+| Top-N | 淘汰堆：堆顶=当前最差；比较器必须全序（同值按 id 裁决，score=0 永远最后） | O(n log k)；分页不重不漏的前提 |
+| 堆容量 | `min(offset + limit, items.size())` | offset 无上界，防恶意参数撑爆分配 |
+| 错误通道 | 服务层一律返回值（`bool`/指针/`optional`），不抛异常；异常仅用于库边界与进程兜底 | 失败通道数量 = 真实失败模式数量 |
+| load/save 失败 | load 失败 → 日志 + 退出进程（fail-fast）；save 失败 → 日志 + 该请求回 500，进程继续 | save 半途失败绝不退出服务器 |
+| PUT 语义 | 仅 4 个用户字段可改（progress/score/comment/tags），无 null 语义，空串/0 表空 | Item.h 顶部注释的编辑性约定 |
+| 模板 vs 具体 | LinkedList/Heap 模板；HashTable `template<typename V>` 键固定 int；Trie/Item 具体 | 各取所需（§9） |
+
+---
+
+## 4. 目录结构
 
 ```text
 MeTrace-Server/
-├── CMakeLists.txt               # FetchContent 拉依赖 + 产物 build/bin/server
-├── AGENT.md                     # 本文件
-├── README.md
-├── .gitignore                   # 忽略 build/、data/
-├── include/                     # 只放头文件
-│   ├── core/                    # 手写数据结构与数据模型
-│   │   ├── Item.h               # ✓ 已有：条目模型（字段以此文件为准）
-│   │   ├── LinkedList.h         # ✓ 已有骨架：单链表，主存储
-│   │   ├── Tag.h                # ✓ 空文件：标签模型（见 §6.3）
-│   │   ├── UndoStack.h          # 待实现：撤销/重做双栈
-│   │   ├── Recommender.h        # 待实现：相似推荐算法
-│   │   ├── Trie.h               # 可选：前缀搜索
-│   │   ├── Heap.h               # 可选：二叉堆（排序 / TopN）
-│   │   └── HashTable.h          # 可选：id → 条目 索引
+├── CMakeLists.txt               # FetchContent 依赖 + GLOB src/*.cpp + 产物 build/bin/server
+├── AGENT.md / README.md
+├── include/
+│   ├── core/                    # 手写数据结构与数据模型（不 include httplib；除 Item.h 外不 include json）
+│   │   ├── Item.h               # ✓ 条目模型（字段以此文件为权威）
+│   │   ├── Tag.h                # ✓ typedef std::string Tag
+│   │   ├── LinkedList.h         # ◐ insert/remove 已有；待 forEach/find/clear/size/删拷贝
+│   │   ├── Trie.h               # ◐ 三操作已有；待 256/unsigned char/Node 析构/删拷贝
+│   │   ├── Heap.h               # ✓ 固定容量堆（Top-N 淘汰语义）
+│   │   ├── HashTable.h          # ○ 空壳：id → Item* 索引（§9.5）
+│   │   ├── UndoStack.h          # ○ 待实现
+│   │   └── Recommender.h        # ○ 待实现
 │   ├── service/
-│   │   └── DataBase.h           # ✓ 已有骨架：加载/保存 + CRUD + undo/redo 编排
+│   │   └── DataBase.h           # ◐ 成员齐；待 mutex + ItemQuery/ListResult + CRUD
 │   └── http/
-│       └── Router.h             # 待重建：路由注册（含参数校验与 JSON 编解码）
-├── src/                         # 与 include/ 一一对应的实现 + main.cpp
-│   ├── main.cpp                 # ✓ 已有：命令行参数解析 + 启动流程
-│   ├── core/                    # Item.cpp（待完善）、UndoStack.cpp、Recommender.cpp …
-│   ├── service/
-│   │   └── DataBase.cpp         # ✓ 空壳待实现
-│   └── http/
-│       └── Router.cpp           # 待重建
-├── scripts/
-│   ├── build.sh                 # ✓ 已有
-│   ├── run.sh                   # ✓ 已有（注释待更新为 json 路径）
-│   └── seed_data.json           # 阶段 4：演示数据
+│       └── Router.h             # ◐ registerRoutes 声明（可改前向声明瘦身，§5.3）
+├── src/                         # 与 include/ 一一对应 + main.cpp
+│   ├── main.cpp                 # ✓ 参数解析 + load/save
+│   ├── core/{Item,Trie}.cpp     # ◐
+│   ├── service/DataBase.cpp     # ◐ load 已有；save/CRUD 待完善
+│   └── http/Router.cpp          # ◐ 堆逻辑待挪回 DataBase（§9.4）
+├── scripts/{build.sh,run.sh}
 ├── tests/
-│   ├── test_api.sh              # ✓ 已有（字段名需按 §6 适配）
-│   ├── test_linkedlist.cpp      # 阶段 1：简单 assert 程序
-│   ├── test_undostack.cpp       # 阶段 3
-│   └── test_recommender.cpp     # 阶段 3
-└── data/
-    └── metrace.json             # 运行时生成（已 gitignore）
+│   ├── test_api.sh              # ✓ 待按新字段适配（§12）
+│   └── test_<结构>.cpp          # 计划：简单 assert 程序
+└── data/metrace.json            # 运行时生成（确认已 gitignore）
 ```
 
-**现状**：`src/main.cpp` 的参数解析已完成，但引用的 `metrace::http::registerRoutes` 与 `include/http/Router.h` 尚未重建；
-`CMakeLists.txt` 中仍残留 SQLiteCpp 的 FetchContent 与链接（阶段 0 清理，见 §12）。
-
-铁律：头文件一律放 `include/`，实现一律放 `src/`，文件名与类名一致（大驼峰）。
+图例：✓ 基本完成 / ◐ 部分 / ○ 未开始。铁律：头文件一律放 `include/`，实现一律放 `src/`，文件名与类名一致（大驼峰）；**模板类的实现整体放头文件**（LinkedList/Heap/HashTable 同模式）。
 
 ---
 
-## 4. 架构设计
+## 5. 架构设计
 
-三层结构，自上而下单向依赖：
+### 5.1 三层结构与职责
 
 ```text
-客户端 (GUI)
-    │  HTTP + JSON
-    ▼
-┌─────────────────────────────────────┐
-│   HTTP 层 (src/http/Router.cpp)     │
-│   路由注册 · 参数校验 · JSON 编解码   │
-└─────────────────────────────────────┘
-    ▼
-┌─────────────────────────────────────┐
-│   业务层 (service/DataBase)          │
-│   加载/保存 · CRUD 编排              │
-│   撤销/重做 · 推荐入口               │
-└─────────────────────────────────────┘
-    ▼
-┌─────────────────────────────────────┐
-│   数据结构与算法层 (core/)           │
-│   LinkedList · UndoStack            │
-│   Recommender（可选 Trie/Heap/…）    │
-│   Item / Tag 数据模型                │
-└─────────────────────────────────────┘
-    ▼
-┌─────────────────────────────────────┐
-│   本地 JSON 文件 (data/metrace.json) │
-└─────────────────────────────────────┘
+客户端 (GUI) ──HTTP+JSON──▶ HTTP 层 (http/Router)     协议语义：解析、校验、调 db、序列化
+                              │
+                              ▼
+                          业务层 (service/DataBase)   数据语义：持有结构、CRUD、过滤排序分页、
+                              │                        撤销重做、推荐、加载保存（全部在锁内）
+                              ▼
+                          结构层 (core/)              手写数据结构与模型（无 httplib、无业务）
+                              ▼
+                          data/metrace.json           唯一持久化副本
 ```
 
-分层职责，**禁止跨层**：
+判别一段代码属于哪层的问题：**"如果这个服务不再是 HTTP 服务，这段代码还活着吗？"** 活着 → DataBase；死掉 → Router。
 
-| 层 | 位置 | 允许做的事 | 禁止做的事 |
-|---|---|---|---|
-| HTTP | `include/http/`、`src/http/` | 解析请求、校验参数、调用 DataBase、写响应 | 直接操作链表、读写文件 |
-| Service | `include/service/`、`src/service/` | 持有数据结构、load/save、业务规则、undo/redo 编排、调用算法 | include httplib |
-| Core | `include/core/`、`src/core/` | 数据结构与算法、Item/Tag 模型与序列化 | include httplib、关心 HTTP 状态码 |
+| 层 | 允许 | 禁止 |
+|---|---|---|
+| HTTP | 解析请求、校验参数（400）、调用 DataBase、序列化响应（调 `toJson`）、异常兜底转 500 | 直接操作链表/堆/哈希、读写文件、实现过滤排序逻辑 |
+| Service | 持有并同步全部数据结构、锁、load/save、业务规则、调用算法 | include httplib、接口出现 json 类型 |
+| Core | 数据结构与算法、Item/Tag 模型与序列化 | include httplib、关心 HTTP 状态码 |
 
-Item 的 JSON 序列化（`toJson`/`fromJson`）放在 core 层，可依赖 nlohmann/json，但不依赖 httplib。
+### 5.2 锁边界 = 分层边界（本架构最重要的不变量）
+
+httplib 用线程池并发处理请求，而链表/堆/哈希表都不是线程安全的。**`DataBase` 持一把 `std::mutex`，所有公有方法进入即 `lock_guard`；写方法内"改内存 + save()"整个在锁内执行**。由此推出：任何对数据结构的遍历/修改都必须发生在某个加锁的 db 方法内部——这就是"查询逻辑必须在 listItems 里而不是 Router 里"的物理原因。Router 永远不直接接触任何数据结构。
+
+### 5.3 依赖与 include 卫生
+
+依赖方向必须保持无环、单向：
+
+```text
+main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/第三方>
+```
+
+1. **IWYU（include what you use）**：每个文件为自己用到的东西显式包含，不搭传递 include 的便车（例：Router.cpp 用 json 就自己 include，不能靠 Router.h 漏下来）；
+2. **头文件尽量前向声明**：签名里只有引用/指针时不需要完整类型。目标形态：`Router.h` 仅含 `namespace httplib { class Server; }` 与 `namespace metrace::service { class DataBase; }` 两行前向声明；`DataBase.h` 不 include json（接口用 `ListResult`/`Item*`，不需要 json 类型）；
+3. **core 保持纯净**：手写结构（LinkedList/Trie/Heap/HashTable）头文件不 include nlohmann/json；json 只经 Item.h 进入 core；
+4. **类型沉降**：跨层共享的类型住在依赖链更下游的那层（Item 在 core，ItemQuery/ListResult 在 service，响应拼装细节只在 Router.cpp）；
+5. `#pragma once` 永远是头文件第一行。
 
 ---
 
-## 5. 数据存储设计
+## 6. 数据存储设计
 
-### 5.1 存储文件格式
-
-单个 JSON 文件（默认 `./data/metrace.json`），启动时全量读入，写操作成功后全量覆写：
+### 6.1 文件格式
 
 ```json
 {
   "next_id": 42,
   "items": [ { "id": 1, "type": "book", "...": "..." } ],
-  "tags":  [ { "id": 1, "name": "科幻" } ]
+  "tags":  [ "科幻", "中国文学" ]
 }
 ```
 
-- `next_id`：自增主键计数器，**持久化在文件里**，保证删除条目后 ID 不复用
-- `items`：全部条目，字段见 §6.1
-- `tags`：全局标签表，`name` 全局唯一
+（tags 为字符串数组——Tag 无独立结构，见 §7.3。）
 
-### 5.2 加载与保存
+### 6.2 load（fail-fast，对外承诺绝不抛出）
 
-- **加载**：`DataBase(path)` 构造时读取文件 → 逐条 `Item::fromJson` → 插入链表；文件不存在按空库启动（不报错）
-- **保存**：每个**写操作**（增/改/删/撤销/重做/新增标签）成功后调用 `save()` 全量覆写
-- **必须原子写**：先写同目录临时文件（如 `metrace.json.tmp`），再 `std::filesystem::rename` 覆盖。
-  这是防止写一半崩溃导致数据文件损坏的唯一保障，不允许直接截断原文件重写
-- 数据规模按几十~几百条设计，全量覆写的性能完全够用，**不要为此做增量写或缓存**
+- 文件不存在 → 空库正常返回；存在但打不开 → 真错误；
+- 解析/字段错误：内部 `catch (const nlohmann::json::exception&)` + 兜底 `catch (const std::exception&)`，打日志（含 `e.what()`，parse_error 自带出错位置）返回 false；
+- `next_id = max(data.value("next_id", 0), 已加载条目 max_id + 1)`；
+- 重载前先 `clear()` 旧内容（LinkedList 需补此方法）；
+- `main` 拿到 false → 打印后 `return 1`。**不许吞错当空库跑**：空库第一次 save 会把可能可修复的数据文件覆盖掉；
+- 可选加固：先整体 `fromJson` 到临时 vector 全部验证，再统一入链表，避免半加载状态。
 
-### 5.3 线程安全 TODO
+### 6.3 save（运行期失败不退出）
 
-httplib 默认用线程池并发处理请求，而链表不是线程安全的。**整个 DataBase 持一把 `std::mutex`，
-所有公开方法（含 undo/redo 与 save）进入即加锁**即可，锁粒度不用再细分——数据量级下不构成瓶颈。
+1. 拼 json：`next_id` + items + tags（`forEach` 遍历序列化）；
+2. 写**同目录**临时文件 `metrace.json.tmp`：`dump(4)`、`flush()`、**检查流状态**（磁盘满/配额此时才暴露，`operator<<` 不报错）；
+3. `std::filesystem::rename`（用 `error_code` 重载，不抛）原子替换；任一步失败：删 tmp、`std::cerr` 打 `[save] 阶段: 路径 (ec.message())，原文件未改动`、返回 false → Router 回 500；
+4. 两个失败分支日志要可区分（"写入失败" vs "rename 失败"）；rename 失败时 tmp 已写好、原文件未动，删 tmp 是清理；
+5. 已接受的简化（可写进报告）：save 失败瞬间内存与磁盘分叉，直到下次成功 save 弥合。
 
-### 5.4 生命周期
+### 6.4 生命周期
 
-`main()` 中先构造 `DataBase` 并保持存活，把引用传给 `registerRoutes(server, db)`，
-路由闭包捕获引用使用；禁止在函数栈上构造后任其析构。
+`main` 中：`DataBase db;` 声明在 `httplib::Server` **之前**（栈析构顺序相反，杜绝"服务还在跑、库已析构"），`if (!db.load(path)) return 1;`，再 `registerRoutes(server, db)` 传引用。带参构造函数已废弃，统一"默认构造 + load"。
 
 ---
 
-## 6. 数据模型
+## 7. 数据模型
 
-### 6.1 Item（以 `include/core/Item.h` 为准）
+### 7.1 Item（以 `include/core/Item.h` 为准）
 
-| 字段 | C++ 类型 | JSON 类型 | 约定 |
+| 字段 | C++ | JSON | 约定 |
 |---|---|---|---|
-| `id` | `int` | number | 服务端生成，只读 |
-| `type` | `ItemType` 枚举 | string | `book` / `movie` / `music`；枚举中的 `Null` 仅作内部默认值，JSON 中不出现 |
-| `title` | `string` | string | 必填，≤ 200 字符 |
-| `author` | `string` | string | 作者/导演/艺术家，空串表示未知 |
-| `description` | `string` | string | 简介，空串表示无 |
-| `date` | `string` | string | 发布日期，推荐 `YYYY-MM-DD`，空串表示未知 |
-| `progress` | `double` | number | 进度 0~1，默认 0（客户端负责显示为百分比） |
-| `score` | `int` | number | **0 表示未评分**，有效评分 1~10 |
-| `comment` | `string` | string | 短评，空串表示无 |
-| `tags` | `vector<string>` | string[] | 标签**名称**数组，去重、按名称 UTF-8 字节序排序，单条目最多 20 个 |
-| `created_at` | `string` | string | `YYYY-MM-DD HH:MM:SS`（UTC），只读 |
-| `updated_at` | `string` | string | 同上，每次 PUT 自动刷新 |
+| `id` | `int` | number | 服务端分配，只读，删除后不复用 |
+| `type` | `std::string` | string | `book`/`movie`/`music`；`kItemTypeName[4]` 映射表含 `"null"` 占位（仅内部默认值，JSON 中不出现） |
+| `title` | `string` | string | 必填 ≤200 字符 |
+| `author` | `string` | string | 空串=未知 |
+| `description` | `string` | string | 空串=无 |
+| `date` | `string` | string | 推荐 `YYYY-MM-DD`（**字符串字典序=时间序**，排序可直接比较）；空串=未知 |
+| `progress` | `double` | number | 0~1，默认 0 |
+| `score` | `int` | number | **1~100，0 = 未评分**（此前文档写 1~10，已按 Item.h 修正） |
+| `comment` | `string` | string | 空串=无 |
+| `tags` | `vector<Tag>` | string[] | 名称数组，去重、按名称排序，≤20 个 |
+| `created_at` / `updated_at` | `string` | string | `YYYY-MM-DD HH:MM:SS`（UTC），服务端管理 |
 
-> 与旧版（SQLite 时期）接口相比：`creator→author`、`year→date`、`review→comment`，
-> 移除 `cover_url` 与 `status`，`score` 从可空 double 改为 int（0 = 未评分，不再使用 null 语义）。
-> 所有"未知/为空"统一用空串或 0 表达，**JSON 中不出现 null**。
+约定：
 
-`Item.h` 待补齐（阶段 0）：`progress`/`tags` 的 setter；`id`/`date`/`author`/`description`/`created_at`/`updated_at` 的 getter；
-`fromJson`/`toJson` 覆盖全部 12 个字段（当前 `Item.cpp` 只处理 4 个，且引用了不存在的成员 `name`，需修为 `title`）。
+- **JSON 中不出现 null**，一切"未知/空"用空串或 0 表达；
+- `operator==` 按 **id** 判等（全项目唯一身份判据）；
+- 可编辑字段仅 4 个：`progress/score/comment/tags`（PUT 白名单）；`type/title/author/description/date` 创建后只读；
+- 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`；
+- 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入），`setTags(std::vector<Tag>)` 按值 + `std::move`。
 
-### 6.2 字段可编辑性
+### 7.2 序列化
 
-- **用户可通过 HTTP 修改的字段只有 4 个**：`progress`、`score`、`comment`、`tags`（对应 `Item.h` 顶部注释）
-- 其余字段（`type`/`title`/`author`/`description`/`date`/`id`/时间戳）为只读，
-  来源仅限创建时的 JSON（本地存储或用户上传的条目信息）
-- 因此 `PUT /api/items/{id}` 只接受上述 4 个字段，其余字段出现在请求体中一律 400
+`toJson/fromJson` 覆盖**全部 12 字段**。已知历史 bug 勿复发：`j["description"] = j["description"]` 自赋值、`tags` 误读 `j["comment"]`、type 必须经 `kItemTypeName` 映射。
 
-### 6.3 Tag
+### 7.3 Tag
 
-标签第一版**不单独建模**：条目上存名称数组，全局标签表是 `{id, name}` 的简单列表
-（打标签时自动创建不存在的名称，删除条目不级联删标签；"孤儿标签"属可接受的简化）。
-`include/core/Tag.h` 暂留空文件，如后续需要再启用。
+`typedef std::string Tag`。全局标签表是 `LinkedList<Tag>` 的名字列表：打标签时自动创建不存在的名字；删除条目不级联删标签（孤儿标签是可接受的简化）。标签接口**无 id 字段**（见 §8.2），因此文件里 tags 存字符串数组。
 
 ---
 
-## 7. HTTP API 规范
+## 8. HTTP API 规范
 
-### 7.1 通用约定
+### 8.1 通用约定
 
-- 基础 URL：`http://127.0.0.1:8000`；业务接口统一 `/api` 前缀，`/` 与 `/ping` 不加
-- 请求/响应：`application/json; charset=utf-8`；ID 为 JSON number
-- 分页：列表类接口统一 `limit`（默认 20，上限 100）与 `offset`（默认 0）
-- `total` 是**满足过滤条件的总条数**（不受分页影响），`items` 只含当前页
-- 错误响应：`{ "error": "错误描述" }`；HTTP 状态码本身即语义（400 参数错误 / 404 不存在 / 500 服务端异常），body 不再重复 code
-- ⚠️ httplib 对任何 ≥400 的响应都会回调 `set_error_handler` 且不清空 `res.body`，
-  统一 404 兜底必须先 `if (!res.body.empty()) return;`，否则会覆盖业务层写好的 400 信息
+- 业务接口统一 `/api` 前缀；`/` 与 `/ping` 不加；请求/响应 `application/json; charset=utf-8`（`/` 例外，返回 text/plain）
+- 时间 `YYYY-MM-DD HH:MM:SS`（UTC）；列表接口 `limit`（默认 20，上限 100）+ `offset`（默认 0）
+- `total` = **满足过滤条件的总条数**（分页前统计，不受分页影响）
+- 错误体 `{"error":"..."}`；状态码即语义：200/201/204/400（参数非法）/404（不存在或无此路由）/500（服务端异常，含 save 失败）
+- ⚠️ httplib 陷阱：`set_error_handler` 对一切 ≥400 回调且**不清空 body**，兜底 404 必须先 `if (!res.body.empty()) return;`；挂 `set_exception_handler` 把漏网异常统一转 500；路径参数路由用正则 `R"(/api/items/(\d+))"`，`req.matches[1]` 取捕获组；不匹配（如 `/api/items/abc`）→ 404 属设计行为；请求体解析用非抛出版本 `json::parse(body, nullptr, false)` + `is_discarded()`
 
-### 7.2 接口列表
+### 8.2 接口列表
 
-| 方法 | 路径 | 说明 | 参数 / 请求体 | 响应 |
+| 方法 | 路径 | 说明 | 参数/请求体 | 响应 |
 |---|---|---|---|---|
-| GET | `/` | 纯文本存活探测 | — | `MeTrace-Server is running` |
-| GET | `/ping` | 健康检查 | — | `{"status":"ok","service":"MeTrace-Server"}` |
+| GET | `/` | 纯文本探测 | — | `MeTrace-Server is running`（text/plain） |
+| GET | `/ping` | 健康检查 | — | `{"status":"ok",...}` |
 | GET | `/api/items` | 条目列表 | `?type=&tag=&sort=&limit=&offset=` | `{"total":N,"items":[Item,...]}` |
-| POST | `/api/items` | 新增条目 | Item 的创建字段（`type`、`title` 必填） | `201` + `Item` |
-| GET | `/api/items/{id}` | 单个条目 | — | `Item` |
-| PUT | `/api/items/{id}` | 部分更新 | 仅 `progress`/`score`/`comment`/`tags`，字段不出现则保持原值 | `Item` |
-| DELETE | `/api/items/{id}` | 删除条目 | — | `204`（无 body） |
-| GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"items":[{id,name},...]}` |
-| POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{id,name}` |
-| POST | `/api/undo` | 撤销 | — | `{"success":true,"action":"..."}` |
-| POST | `/api/redo` | 重做 | — | `{"success":true,"action":"..."}` |
+| POST | `/api/items` | 新增条目 | 创建字段（type、title 必填） | 201 + Item |
+| GET | `/api/items/{id}` | 单个条目 | — | Item |
+| PUT | `/api/items/{id}` | 部分更新 | **仅** progress/score/comment/tags，缺省=不改 | Item |
+| DELETE | `/api/items/{id}` | 删除条目 | — | 204 |
+| GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"items":["科幻",...]}`（**名字数组，无 id**） |
+| POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | 201 + `{"name":"科幻"}` |
+| POST | `/api/undo` / `/api/redo` | 撤销/重做 | — | `{"success":true,"action":"..."}` |
 | GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
-| GET | `/api/search` | 前缀搜索（计划） | `?q=&type=&limit=&offset=` | `{"total":N,"items":[Item,...]}` |
-| GET | `/api/stats` | 统计聚合（可选） | `?type=` | `{total, by_type, score_dist}` |
+| GET | `/api/search` | 前缀搜索（计划） | `?q=&type=&limit=&offset=` | 同列表 |
+| GET | `/api/stats` | 统计聚合（可选） | `?type=` | `{total,by_type,score_dist}` |
 
-### 7.3 参数取值
+### 8.3 参数细则（GET /api/items 为范式，其余列表接口同构）
 
-| 参数 | 取值 | 说明 |
-|---|---|---|
-| `type` | `book` / `movie` / `music` | 缺省不过滤 |
-| `tag` | 标签名称 | 按名称精确匹配 |
-| `sort` | `created_at` / `score` / `date` / `title`，前缀 `-` 为倒序 | 默认 `-created_at` |
-| `limit` | 1~100 | 默认 20，越界截断 |
-| `offset` | ≥ 0 | 默认 0 |
-| `q` | 任意字符串 | 走 Trie 前缀匹配；为空返回空列表而不是全表 |
-| `item_id` | 条目 id | `/api/recommend` 缺省时返回全局高分榜（冷启动兜底） |
-| `topN` | 正整数，默认 10，上限 50 | 推荐条数 |
+| 参数 | 规则 |
+|---|---|
+| `type` | 白名单 book/movie/movie，非法 → 400 |
+| `tag` | 任意字符串，按名精确匹配，缺省不过滤 |
+| `sort` | `[-]created_at/score/date/title`，默认 `-created_at`；`-` 前缀=倒序；非法 → 400 |
+| `limit` | 非数字 → 400；越界 → **静默截断**到 1~100（枚举非法报错、数值越界宽容，是刻意的不对称） |
+| `offset` | 非数字 → 400；负数截断到 0；无上界但堆容量有防护（§9.4） |
 
-取值非法（如 `type=game`、`sort=unknown`）一律返回 400，不静默忽略。
+实现要点：整数解析用 `std::from_chars`（严格、不抛、拒绝 `"20x"`），不用 `stoi`；校验产物装入 `ItemQuery`；未知参数忽略、空值视同未提供。`ItemQuery/SortField/ListResult` 定义在 `DataBase.h`（类型沉降，§5.3）。
 
-### 7.4 撤销 / 重做语义
+### 8.4 撤销/重做语义
 
-- 双栈在**进程内存**中，不按客户端会话隔离；服务重启即清空
-- 只有写操作入栈：`POST/PUT/DELETE /api/items`、`POST /api/tags`；GET 一律不入栈
-- `Action` 记录"如何反向执行"：操作类型 + 条目 id + 操作前/后快照（Update 记 before/after，
-  Create 记 after，Delete 记 before）+ 一句中文描述（如 `新增《三体》`，供界面展示）
-- 撤销 Create = 删除该条目；撤销 Update = 恢复 before；撤销 Delete = 重新插入 before；重做反之
-- 栈空时返回 `400` + `{"error":"nothing to undo"}`（redo 同理）
-- undo 栈容量上限 100，超出丢弃最旧一条
-- 撤销/重做本身**不入栈**（重做栈只在新的写操作发生时清空，这是双栈的标准语义）
+进程内存双栈、不分会话、重启清空；仅写操作入栈（POST/PUT/DELETE items、POST tags）；`Action{kind,itemId,before,after,tagName,description}` 记录反向执行所需快照（Update 记 before/after，Create 记 after，Delete 记 before）；撤销 Create=删除、撤销 Update=恢复 before、撤销 Delete=重插 before；栈空 → 400 `nothing to undo`；容量 100 丢最旧；新写操作清空 redo 栈；撤销/重做本身不入栈。
 
-### 7.5 推荐语义
+### 8.5 推荐语义
 
-- 相似度打分（默认权重，可调）：`3 × 共同标签数 + 2 × 同作者 + 1 × 同类型`；
-  同分时评分高者优先，仍未分（score=0）的条目排最后
-- 实现方式二选一（都能满足算法讲解要求）：
-  1. 直接遍历链表逐条打分，O(n·k)（k 为平均标签数）
-  2. 构建邻接表图（共同标签/同作者连边），按共同邻居数排序，O(V+E)
-- `item_id` 缺省时返回全库按 `score` 降序的高分榜（用排序或手写堆取 TopN）
-- 响应 `items` 不含条目自身
-
-### 7.6 示例
-
-**POST /api/items**
-
-```json
-// 请求
-{
-  "type": "book",
-  "title": "三体",
-  "author": "刘慈欣",
-  "date": "2006-01-01",
-  "description": "地球文明三部曲第一部",
-  "progress": 0.5,
-  "score": 9,
-  "comment": "震撼",
-  "tags": ["科幻", "中国文学"]
-}
-
-// 响应 201 Created
-{
-  "id": 1,
-  "type": "book",
-  "title": "三体",
-  "author": "刘慈欣",
-  "description": "地球文明三部曲第一部",
-  "date": "2006-01-01",
-  "progress": 0.5,
-  "score": 9,
-  "comment": "震撼",
-  "tags": ["中国文学", "科幻"],
-  "created_at": "2026-09-29 10:00:00",
-  "updated_at": "2026-09-29 10:00:00"
-}
-```
-
-- `tags` 中不存在的标签自动创建并写入全局标签表；重复标签去重
-- 未提供的可选字段用默认值（`progress`→`0`、`score`→`0`、字符串→空串、`tags`→`[]`）
-- 响应必须回传完整条目（含服务端生成的 `id` 与时间戳），便于客户端刷新本地缓存
-
-**PUT /api/items/{id}** —— 部分更新，只认 4 个可编辑字段：
-
-```json
-{ "progress": 1.0, "score": 10, "tags": ["科幻"] }
-```
-
-字段不出现则保持原值；`tags` 传 `[]` 即清空标签。**不使用 null 语义**，出现 null 或只读字段一律 400。
+相似度 = `3×共同标签数 + 2×同作者 + 1×同类型`，同分时评分高者优先、未评分（0）最后；实现可遍历打分 O(n·k) 或邻接表图 O(V+E) 二选一；`item_id` 缺省返回高分榜（Heap 取 TopN）；响应不含条目自身。
 
 ---
 
-## 8. 核心数据结构与算法（课设重心）
+## 9. 核心数据结构与算法
 
-### 8.1 必做
+### 9.1 LinkedList（模板，主存储）
 
-| 文件 | 结构/算法 | 关键操作与复杂度 | 用途 |
-|---|---|---|---|
-| `LinkedList.h/cpp` | 单链表 | 头插 O(1)；按 id 查找/删除 O(n) | 全部条目的主存储，所有 CRUD 都在链表上 |
-| `UndoStack.h/cpp` | 双栈 | push/undo/redo 均摊 O(1)，容量 100 | 撤销/重做（语义见 §7.4） |
-| `Recommender.h/cpp` | 相似度推荐 | 遍历打分 O(n·k) 或图共同邻居 O(V+E) | `/api/recommend`；高分榜用排序 O(n log n) |
+- 已有：头插 insert、remove（prev/cur 双指针，按 `operator==` 即按 id）
+- **待补**：`forEach(const std::function<void(const T&)>&) const`（只读遍历，save/列表/推荐全靠它）；`T* find(const T&)`（返回可变指针，PUT 改值用；键字段 id 只读的纪律由 Item 的访问器保证）；`clear()`（load 重载前清空，析构复用）；`size_t size()`（insert/remove 时 O(1) 维护 count_，供堆容量钳制与 total 校验）
+- **三法则**：自定义析构已存在，必须 `= delete` 拷贝构造与拷贝赋值
+- 纪律：载荷（data）经 `T*` 开放读写；结构变更只走成员函数；**遍历中禁止 insert/remove**（需要就先收集后处理）；辅助结构（HashTable）持有的指针必须与结构变更**同锁同步**
 
-### 8.2 可选（按人力与兴趣取舍，每人至少再认领一个）
+### 9.2 Trie（前缀树，search 用）
 
-| 文件 | 结构 | 关键操作与复杂度 | 用途 |
-|---|---|---|---|
-| `Trie.h/cpp` | 前缀树 | insert/search O(L) | `/api/search` 标题/作者前缀搜索 |
-| `Heap.h/cpp` | 二叉堆 | push/pop O(log n)，top O(1) | 推荐与高分榜的 TopN；`sort=-score` |
-| `HashTable.h/cpp` | 链地址法哈希表 | 平均 O(1)，负载因子 >0.75 扩容 | id → 条目的索引，加速单查/改/删 |
+- `Node{is_word, cnt_next, next[128]}` → **改 `next[256]`**：中文 UTF-8 字节 ≥0x80，128 会越界；所有下标统一 `unsigned char`（char 有符号，负下标是 UB，编译警告 `-Wchar-subscripts` 即此问题）
+- `removeRec` 递归方案已定：后序递归返回"节点是否变空"，父层负责 delete + 断链 + `--cnt_next`；head 是值成员永不删
+- **Node 递归析构**：`~Node(){ for (auto c : next) if (c) delete c; }`，`~Trie() = default` 即可。递归深度 = 最长键字节数（≤约 600），栈安全；勿改显式栈（递归的隐式栈只占 O(深度)，显式栈积压未访问兄弟，内存反而差）
+- Trie 与 Node 均**删除拷贝**；`operator[]` 的"自动建节点"语义只允许 insert 使用，query/remove 走判空分支（否则删不存在的词会凭空建节点）
 
-### 8.3 接口示例（可按实现微调，复杂度注释必须写）
+### 9.3 Heap（固定容量堆，已实现）
 
-```cpp
-// include/core/LinkedList.h —— 单链表：主存储
-template <typename T>
-class LinkedList {
-public:
-    void insert(const T& value);          // 头插 O(1)
-    bool removeById(int id);              // 按 id 摘除节点 O(n)
-    T* findById(int id);                  // 未命中返回 nullptr O(n)
-    std::vector<T*> toVector() const;     // 供列表过滤/排序/推荐遍历 O(n)
-private:
-    struct Node { T data; Node* next = nullptr; };
-    Node* head_ = nullptr;
-};
-// 析构逐节点 delete；拷贝构造/赋值直接禁用（= delete），避免浅拷贝双重释放
+- `template<typename T>` + 构造注入 `std::function<bool(const T&,const T&)> comp`（comp(a,b)=true 表示 a 更靠堆顶）；`explicit` 构造；`new T[capacity]{}` / `delete[]` 配对；拷贝已删（三法则）
+- `bool push`：未满→收录返回 true；满且更优→顶掉堆顶返回 true；满且不优→false（**设计内常态，不抛异常**——异常只留给 bad_alloc 这类系统灾难，由 main 顶层兜底）
+- `T pop()`：末元素补根再下沉；空堆 pop 是调用方违约，`assert` 拦截；`top()/size()/empty()` 伴生
+- 命名即文档：sift=逐层比较条件推进，shift=无条件整体平移，勿混用
+- 构造时容量 `assert(>0)`（容量 0 几乎必是调用方笔误，出生时拦截）
 
-// include/core/UndoStack.h —— 撤销/重做双栈
-struct Action {
-    enum class Kind { CreateItem, UpdateItem, DeleteItem, CreateTag };
-    Kind        kind;
-    int         itemId = 0;          // CreateTag 时存 tag id
-    Item        before;              // 操作前快照（Update/Delete 用）
-    Item        after;               // 操作后快照（Create/Update 用）
-    std::string tagName;             // 仅 CreateTag 使用
-    std::string description;         // 界面展示，如 "新增《三体》"
-};
+### 9.4 listItems 的 Top-N（淘汰堆用法，住在 DataBase.cpp）
 
-class UndoStack {
-public:
-    explicit UndoStack(std::size_t capacity = 100);
-    void push(const Action& action);       // 入 undo 栈并清空 redo 栈；超容量丢最旧
-    std::optional<Action> undo();          // 弹出待反向执行的操作
-    std::optional<Action> redo();
-    bool canUndo() const;
-    bool canRedo() const;
-};
-
-// include/core/Recommender.h —— 相似推荐（权重见 §7.5）
-class Recommender {
-public:
-    static std::vector<int> similar(const LinkedList<Item>& items, int itemId, int topN);
-    static std::vector<int> topScored(const LinkedList<Item>& items, int topN);  // 冷启动高分榜
-};
+```text
+上锁 → forEach: 匹配过滤则 total++ 且参与堆竞争 → 弹出全部（最差在前）→ reverse → 跳过 offset 取至多 limit → 解锁返回
 ```
 
-### 8.4 结构 → 真实调用方（验收会现场追问"这个类在哪里被调用"）
+- **淘汰堆方向**：堆顶 = 当前 k 个候选中最差者，新元素只与堆顶比较——这是 O(n log k) 的机关；`listItems` 循环体因此缩成一行 `push`
+- **比较器必须全序**：字段值同 → 按 id 裁决（**分页不重不漏的硬前提**，否则跨页重复/丢失）；score=0 无论方向永远最后
+- **容量 = min(offset+limit, items.size())**：offset 无上界，防恶意参数巨额分配
+- 高分榜（recommend 冷启动）复用 Heap，comp 方向取正即可
 
-`LinkedList` → DataBase 的全部 CRUD；`UndoStack` → `/api/undo`、`/api/redo`；
-`Recommender` → `/api/recommend`；`Trie` → `/api/search`；`Heap` → 推荐与高分榜 TopN；
-`HashTable` → DataBase 单查/改/删的索引。**只写不用的结构不算数**。
+### 9.5 HashTable（待实现，`template<typename V>` 键固定 int）
 
----
+- 链地址法：桶为 Entry 单链表；除法散列 `key % 桶数`（桶数取素数，初始 17）；负载因子 >0.75 → rehash 到约两倍素数（**摘下重挂**，不是复制后删）
+- 接口：`V* find(int)` / `void insert(int, V)`（已存在则覆盖）/ `bool erase(int)` / `size()`
+- **不拥有值**：析构逐桶 delete Entry 但绝不 delete 值；存的是 `Item*`（指向链表节点内的 data）——存拷贝无用（PUT 会改到副本），存 Node* 不可能（private 类型）
+- 与链表同步在 DataBase 锁内：插入同挂、删除同摘；漏同步 = 悬垂指针
+- 落地策略：先写 O(n) 链表版 CRUD 跑通 HTTP，HashTable 作为**内部加速器**后替换，对外签名不变，`test_api.sh` 全绿作回归验证
 
-## 9. 开发规范
+### 9.6 UndoStack / Recommender（待实现）
 
-### 9.1 代码风格
+规格见 §8.4 / §8.5。UndoStack 为双栈，`push/undo/redo` 均摊 O(1)，容量 100，超出丢最旧。结构 → 真实调用方对应表（答辩必问）：
 
-- 类名/文件名大驼峰 `ClassName`，函数小驼峰 `functionName`，变量小写下划线 `variable_name`
-- 命名空间 `metrace::core` / `metrace::service` / `metrace::http`；禁止 `using namespace std;`
-- 头文件 `#pragma once`，只 include 真正需要的东西
-- 注释用中文；核心数据结构必须注明时间/空间复杂度
-- 保持码量克制：**能 10 行解决的绝不写 30 行**，课设评分看结构与算法，不看分层花样
-
-### 9.2 错误处理
-
-- 业务错误（参数非法/不存在）由 Router 统一映射为 400/404 的 JSON 错误
-- 文件读写失败打印 `std::cerr` 并让操作失败（500），不要静默吞掉
-
-### 9.3 日志
-
-访问日志记录方法、路径、状态码与耗时，输出到 `std::cerr` 即可。
-
-### 9.4 Git 提交
-
-提交信息格式 `[模块] 简要描述`，如 `[core] 实现 LinkedList 插入与删除`。定期提交，保留开发过程记录。
+`LinkedList` → 全部 CRUD；`Heap` → listItems / recommend；`HashTable` → getItem/update/delete；`Trie` → search；`UndoStack` → undo/redo；`Recommender` → recommend。**只写不用的结构不算数**。
 
 ---
 
-## 10. 构建与运行
+## 10. 开发规范
 
-`CMakeLists.txt` 要点（阶段 0 清理后的目标状态）：
+### 10.1 C++ 惯例（已确立，照做）
 
-- FetchContent 只拉 `httplib`（v0.57.1）与 `nlohmann_json`（v3.12.0），**删除 SQLiteCpp 的 Declare 与链接**
-- `file(GLOB_RECURSE ... src/*.cpp)` 自动收集源文件，新增文件无需改 CMake
-- 产物固定 `build/bin/server`；`-Wall -Wextra -Wpedantic`；Release 下 LTO
+- 类名/文件名大驼峰，函数小驼峰，变量小写下划线；命名空间 `metrace::core/service/http`；禁 `using namespace std;`
+- **三法则**：任何手动 `new`/`delete` 资源的类（LinkedList/Trie/Heap/HashTable），析构之外必须删除拷贝；判别法——"这个类的指针一浅拷贝会怎样"
+- **explicit**：单参（或单必选参）构造默认加；**[[nodiscard]]**：getter 与不可忽略的返回值加
+- 返回类型：getter 标量按值、string/vector 按 const&；setter 一律 void；**失败通道数量 = 真实失败模式数量**（0 失败→void，1 失败→bool/optional/指针，多种且需区分→带数据的结果类型）
+- 异常边界：库（nlohmann/httplib/std::stoi）会抛 → Router 用非抛出 API、load 内 catch 收编、main 顶层兜底；服务层自身签名不抛
+- 原始字符串 `R"(...)"`：括号是语法框架，正则与内嵌引号的 JSON 用它，普通文本不用
+- 成员初始化顺序 = 声明顺序；初始化列表书写顺序与声明顺序保持一致
+- 注释中文，核心结构必须注明复杂度；Doxygen 风格 `///`
+
+### 10.2 Git 与日志
+
+- 提交信息 `[模块] 简要描述`（如 `[core] 实现 HashTable 链地址法与扩容`）；修 bug 与架构调整分开提交
+- 日志统一 `[模块] 动作: 细节 (原因)` 前缀，一行一事，失败分支可区分
+
+### 10.3 码量纪律
+
+评分看结构与算法，不看分层花样：删得动的抽象都删掉；不引 gtest、不拆 Models.h、不做 pimpl；`std::vector` 可作底层容器，但节点串接、sift、散列扩容、Trie 节点、递归释放必须手写。
+
+---
+
+## 11. 构建与运行
 
 ```bash
-./scripts/build.sh          # 构建
-./scripts/run.sh            # 启动（默认 127.0.0.1:8000 + ./data/metrace.json）
+./scripts/build.sh                        # = cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+./scripts/run.sh                          # 127.0.0.1:8000 + ./data/metrace.json
 ./scripts/run.sh --port 9000 --db /tmp/demo.json
-./build/bin/server --help
+./tests/test_api.sh http://127.0.0.1:8000 # 需服务端已启动
 ```
 
-启动参数（已在 `src/main.cpp` 实现，优先级 命令行 > 环境变量 > 默认值）：
-
-| 参数 | 环境变量 | 默认值 | 说明 |
-|---|---|---|---|
-| `--host <addr>` | `METRACE_HOST` | `127.0.0.1` | 监听地址 |
-| `--port <port>` | `METRACE_PORT` | `8000` | 监听端口（1~65535） |
-| `--db <path>` | `METRACE_DB` | `./data/metrace.json` | JSON 存储文件路径（父目录自动创建） |
+- CMake：GLOB_RECURSE 收集 `src/*.cpp`（CONFIGURE_DEPENDS，新增文件免改构建；Makefile/Ninja 生成器下生效）；`-Wall -Wextra -Wpedantic`，**目标零警告**；Release 下 LTO
+- 参数优先级：命令行 > 环境变量（`METRACE_HOST/PORT/DB`）> 默认值；`--db` 父目录自动创建
 
 ---
 
-## 11. 测试策略
+## 12. 测试策略
 
-- **单元测试**：每个 core 结构一个简单 assert 程序（`tests/test_*.cpp`，普通 main + 断言即可，不引入 gtest），
-  重点覆盖链表增删边界（空表/头节点/不存在 id）与双栈语义（undo 后 redo、新写操作清空 redo 栈、容量淘汰）
-- **接口测试**：`tests/test_api.sh`（curl 断言），阶段 2 需按 §6 字段名适配（`creator→author`、`review→comment`、`year→date`、`score` 为 int）
-- **集成演示**：加载 `scripts/seed_data.json`，验证增删改查、撤销重做、推荐
-- **性能测试**（阶段 4）：1000 条数据下推荐与（若实现）搜索的响应时间
-
----
-
-## 12. 开发任务清单（按阶段）
-
-### 阶段 0：清理残留，恢复可编译（9.29~9.30）
-
-- [ ] `CMakeLists.txt` 移除 SQLiteCpp 的 FetchContent 与链接
-- [ ] `main.cpp` 默认路径改 `./data/metrace.json`，include `service/DataBase.h`；`DataBase` 由 main 持有并传引用给路由注册
-- [ ] 修复 `Item.cpp`（`name`→`title`），补全 `toJson`/`fromJson` 全部 12 字段；`Item.h` 补 getter/setter（见 §6.1）
-- [ ] 重建最小 `Router`（先只挂 `/` 与 `/ping`）
-- [ ] `.gitignore` 改为忽略 `data/`；`run.sh` 注释更新
-- 验收：`./scripts/build.sh` 通过，`/ping` 返回 200
-
-### 阶段 1：数据层（10.1~10.3）
-
-- [ ] `LinkedList`：insert / removeById / findById / toVector + `tests/test_linkedlist.cpp`
-- [ ] `DataBase`：构造加载（文件不存在按空库）、`save()` 原子落盘（临时文件 + rename）
-- [ ] `next_id` 持久化；标签表加载与 upsert
-- 验收：手工构造 JSON 文件，启动加载正确、写操作后文件内容正确
-
-### 阶段 2：HTTP CRUD 重建（10.4~10.7）
-
-- [ ] `/api/items` 全部 5 个路由 + 参数校验 + 过滤/排序/分页（排序先直接实现，归并/快排可作为算法讲解点）
-- [ ] `/api/tags` 两个路由（同名幂等）
-- [ ] `tests/test_api.sh` 字段适配，37 项断言全过
-- 验收：接口测试全部通过
-
-### 阶段 3：撤销重做与推荐（10.8~10.12，两人并行）
-
-- [ ] A 线：`UndoStack` + `/api/undo`、`/api/redo` + 写操作入栈改造 + `tests/test_undostack.cpp`
-- [ ] B 线：`Recommender`（相似 + 高分榜）+ `/api/recommend` + `tests/test_recommender.cpp`
-- [ ] 可选：`Trie` + `/api/search`，或 `Heap`/`HashTable` 接入现有链路
-- 验收：新接口有测试断言；能指着代码讲清结构与复杂度
-
-### 阶段 4：完善与验收（10.13~10.16）
-
-- [ ] 50~100 条演示数据 `scripts/seed_data.json`
-- [ ] 1000 条压测（推荐、搜索响应时间）
-- [ ] README 与本文档核对一致；演示视频与讲稿
-- [ ] 检查人均代码量 ≥ 500 行，准备现场代码讲解要点
+- **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + assert）。Heap 用例：容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应**编译失败**（禁拷贝生效的证明）。LinkedList：空表/头节点/不存在 id 边界
+- **db 可直接单测**：listItems 等 db 方法不依赖 HTTP 即可调用验证（分层红利）
+- **接口测试**：`test_api.sh` 适配新字段（creator→author、review→comment、year→date、score 为 int 1~100、tags 无 id）
+- 压测（阶段 4）：1000 条下 listItems / recommend 响应时间
 
 ---
 
-## 13. 两人分工建议
+## 13. 开发任务清单
 
-| 成员 | 负责 | 对应结构与算法 |
+### 阶段 0：清理与恢复编译 ✅（基本完成）
+
+- [x] 移除 SQLiteCpp；CMake 仅 httplib + nlohmann_json
+- [x] 全部头文件 `#pragma once`
+- [x] main.cpp：参数解析 + load fail-fast + 声明顺序（db 先于 server）
+- [ ] 收尾：确认 `.gitignore` 含 `data/`
+
+### 阶段 1：数据层（10.1~10.5，进行中）
+
+- [ ] Item：恢复 setter、toJson/fromJson 全字段、friend DataBase、touch()
+- [ ] LinkedList：forEach / find / clear / size + 删拷贝 + `tests/test_linkedlist.cpp`
+- [ ] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；清零编译警告
+- [ ] DataBase：mutex；save 原子写（§6.3）；next_id 兜底初始化；load 加固（§6.2）
+- [ ] 验收：手工构造 JSON，load → 改内存 → save 回读一致
+
+### 阶段 2：HTTP CRUD（10.6~10.9）
+
+- [ ] `ItemQuery/SortField/ListResult` 落入 DataBase.h；实现 listItems（**Top-N 堆从 Router.cpp 挪入**，§9.4）/ getItem / createItem / updateItem / deleteItem / tags 两方法（save 在锁内）
+- [ ] Router：/api/items 五路由 + /api/tags 两路由 + 校验（§8.3）+ error/exception handler
+- [ ] include 卫生：Router.h 前向声明；DataBase.h 去 json；Router.cpp 自带 json
+- [ ] `test_api.sh` 字段适配，全部断言通过
+
+### 阶段 3：算法功能（10.10~10.14，两人并行）
+
+- [ ] A 线：UndoStack + undo/redo 路由 + 写操作入栈
+- [ ] B 线：Recommender（相似 + 高分榜复用 Heap）+ /api/recommend；可选 Trie+search / HashTable 索引接入
+- [ ] 各自 `tests/test_*.cpp`；能指着代码讲结构与复杂度
+
+### 阶段 4：完善与验收（10.15~10.18）
+
+- [ ] 50~100 条演示数据 `scripts/seed_data.json`；1000 条压测
+- [ ] 文档核对（README/本文档与代码一致）；演示视频与讲稿；人均码量核查
+
+---
+
+## 14. 两人分工
+
+| 成员 | 负责 | 结构 |
 |---|---|---|
-| A | 存储与操作侧：链表 CRUD、JSON 序列化与持久化、撤销重做 | LinkedList、UndoStack（+ 可选 HashTable） |
-| B | 算法侧：推荐、排序/TopN、（可选）前缀搜索 | Recommender（+ 可选 Heap / Trie） |
+| A | 存储侧：链表、JSON 序列化与持久化、撤销重做 | LinkedList、UndoStack（+可选 HashTable） |
+| B | 算法侧：Top-N/推荐/排序、（可选）搜索与索引 | Heap、Recommender（+可选 Trie/HashTable） |
 
-两人都要能独立讲清自己那部分的结构定义、操作实现与复杂度；HTTP 层（Router）由两人共同维护，谁先到谁写。
-
----
-
-## 14. 验收标准与演示准备
-
-- 服务端能独立启动并监听端口，所有接口返回 JSON，数据重启不丢
-- 核心数据结构手写且**有真实调用方**，能现场解释代码与复杂度
-- 撤销/重做、推荐功能可演示；`tests/test_api.sh` 全部通过
-- 演示准备：提前 `./scripts/run.sh`；`seed_data.json` 灌数据；准备 curl 命令逐个展示 CRUD → 撤销重做 → 推荐；
-  讲解顺序建议：链表节点结构 → 双栈撤销 → 推荐打分/图遍历
+HTTP 层共同维护。每人必须能独立讲清自己结构的定义、操作实现与复杂度。
 
 ---
 
-## 15. 注意事项
+## 15. 验收标准与演示
 
-1. **不要使用 Python 中间层**，服务端纯 C++ 实现
-2. **主存储是内存链表，JSON 文件是唯一持久化副本**；除保存/加载外，任何代码不得直接读写该文件
-3. **核心数据结构必须手写**：`std::vector`/`std::stack` 可作底层容器，但链表的节点串接、双栈的语义、
-   堆的上浮/下沉、哈希的散列与扩容、Trie 的节点、推荐打分逻辑必须自己写
-4. 所有代码必须能现场解释，避免复制无法理解的代码
-5. 写操作落盘必须走原子写（§5.2），这是硬性要求
-6. 接口路径与响应格式以本文档 §7 为准；字段以 §6 为准；改文档先于改代码
-7. 保持码量克制，宁少勿滥——删得动的抽象都删掉
+- 服务独立启动、全部接口可用、数据重启不丢；`test_api.sh` 全绿
+- 手写结构有**真实调用方**（对应表见 §9.6），能现场解释与复杂度分析
+- 撤销/重做、推荐可演示；讲解顺序建议：链表节点 → 淘汰堆与全序比较器 → 双栈 → 推荐
+- 能回答两个高频追问："为什么查询逻辑在 db 不在 Router"（锁边界）；"为什么不用平衡树做排序索引"（过滤组合使索引失效 + 规模账：千条排序微秒级）
 
 ---
 
-## 16. 后续可能的开发方向
+## 16. 注意事项
+
+1. 服务端纯 C++，不用 Python 中间层；**主存储是内存结构，JSON 文件是唯一持久化副本**，除 load/save 外任何代码不直接读写该文件
+2. **锁内做一切数据操作**；写操作"改内存 + save"在同一临界区
+3. **比较器必须全序**（id 兜底），否则堆和分页都会悄悄坏
+4. 新头文件第一行 `#pragma once`；include 不搭便车；core 结构头文件不进 json
+5. 三法则：拥有裸指针资源的类必删拷贝
+6. 写操作落盘必须原子写（tmp + rename），这是硬性要求
+7. 文档先于代码：改接口先改本文档 §8；字段以 §7 为准
+8. 保持零警告（`-Wall -Wextra -Wpedantic` 一直开着，新警告一冒头就修）
+
+---
+
+## 17. 后续可能的开发方向
 
 - 条目只读信息（标题/作者/日期/简介）从外部数据源（如 NeoDB）导入，丰富用户上传之外的创建途径
 - 数据量或并发访问显著增长时，可将存储层替换为嵌入式数据库，上层 HTTP 与业务接口保持不变
