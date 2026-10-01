@@ -13,14 +13,11 @@ static const std::string kItemTypeName[4] = {
     "null", "book", "movie", "music"
 };
 
+/// @brief 条目类，表示一个条目对象
+/// @details 包含条目的基本信息，如标题、作者、简介、发布日期、观看进度、评分、评论、标签等
+/// 提供 JSON 序列化和反序列化功能
+/// ID、创建时间、更新时间自动管理，其它用户可修改
 class Item {
-
-/*
- * 条目类，表示一个条目对象
- * 包含条目的基本信息，如标题、作者、简介、发布日期、观看进度、评分、评论、标签等
- * 提供 JSON 序列化和反序列化功能
- * ID、创建时间、更新时间自动管理，其它用户可修改
- */
 
 private:
     int id;                         // ID
@@ -39,7 +36,7 @@ private:
     Item() = default;
 
 public:
-    // Item(const Item&) = delete;
+    Item(const Item&) = default;
     ~Item() = default;
 
     bool operator == (const Item& a) const;

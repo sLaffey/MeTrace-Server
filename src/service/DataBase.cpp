@@ -93,4 +93,77 @@ bool DataBase::save(const std::string& dbPath) const
     return true;
 }
 
+/// @brief 按照 id 获取条目，返回指针，若不存在返回 nullptr
+/// @param id 
+/// @return 一个指向条目的指针，若不存在返回 nullptr
+const metrace::core::Item* DataBase::getItem(int id) const
+{
+    const metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
+    return item;
+}
+
+/// @brief 根据传入的 patch 更新条目，返回更新后的条目指针，若不存在返回 nullptr
+/// @param id 
+/// @param patch 
+/// @return 更新后的条目指针，不存在则为 nullptr
+const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const metrace::service::ItemPatch& patch)
+{
+    metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
+    if (item == nullptr) {
+        return nullptr;
+    }
+
+    if (patch.type.has_value()) item->setType(patch.type.value());
+    if (patch.title.has_value()) item->setTitle(patch.title.value());
+    if (patch.author.has_value()) item->setAuthor(patch.author.value());
+    if (patch.description.has_value()) item->setDescription(patch.description.value());
+    if (patch.date.has_value()) item->setDate(patch.date.value());
+    if (patch.progress.has_value()) item->setProgress(patch.progress.value());
+    if (patch.score.has_value()) item->setScore(patch.score.value());
+    if (patch.comment.has_value()) item->setComment(patch.comment.value());
+    if (patch.tags.has_value()) item->setTags(patch.tags.value());
+
+    return item;
+}
+
+/// @brief 根据 id 删除条目
+/// @param id 
+/// @return 是否成功删除
+bool metrace::service::DataBase::removeItem(int id)
+{
+    return items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
+}
+
+/// @brief 插入新条目
+/// @param item 
+/// @return 指向新条目的指针
+const metrace::core::Item* DataBase::createItem(const metrace::core::Item& item)
+{
+    return items.insert(item);
+}
+
+/// @brief 查找标签
+/// @param tag 
+/// @return 返回该标签的指针，不存在则为 nullptr
+const metrace::core::Tag* DataBase::findTag(const metrace::core::Tag& tag) const
+{
+    return tags.find(tag);
+}
+
+/// @brief 插入新标签
+/// @param tag 
+/// @return 指向新标签的指针
+const metrace::core::Tag* DataBase::createTag(const metrace::core::Tag& tag)
+{
+    return tags.insert(tag);
+}
+
+/// @brief 删除标签
+/// @param tag 
+/// @return 是否成功删除
+bool DataBase::removeTag(const metrace::core::Tag& tag)
+{
+    return tags.remove(tag);
+}
+
 } // namespace metrace::service
