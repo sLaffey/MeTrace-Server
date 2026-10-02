@@ -1,5 +1,7 @@
 #include <charconv>
 
+#include <nlohmann/json.hpp>
+
 #include "http/Router.h"
 #include "service/DataBase.h"
 
@@ -7,6 +9,10 @@ namespace metrace::http {
 
 namespace {
 
+/// @brief 较标准库更严格的字符串向整数的转换
+/// @param str 
+/// @param res 
+/// @return 是否正常解析
 static bool parseIntStrict(const std::string& str, long long& res)
 {
     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), res);
@@ -73,31 +79,40 @@ static std::optional<metrace::service::ItemQuery> parseItemQuery(const httplib::
     return q;
 }
 
+constexpr const char* kJsonType = "application/json; charset=utf-8";
+
 } // namespace
 
 void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 {
     server.Get("/ping", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(R"({"status":"ok"})", "application/json");
+        res.set_content(R"({"status":"ok"})", kJsonType);
     });
 
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content("MeTrace-Server is running", "application/json");
+        res.set_content("MeTrace-Server is running", kJsonType);
     });
 
     // /api/items 接口，返回 Item 列表
     server.Get("/api/items", [&db](const httplib::Request& req, httplib::Response& res) {
-        const auto& parsed_query = parseItemQuery(req);
+        const auto parsed_query = parseItemQuery(req);
         if (!parsed_query.has_value()) {
             res.status = 400;
-            res.set_content(R"({"error":"Invalid query parameters"})", "application/json");
+            res.set_content(R"({"error":"Invalid query parameters"})", kJsonType);
             return;
         }
 
-        const auto& query = parsed_query.value();
-        const auto& ans = db.query(query);
+        const auto query = parsed_query.value();
+        const metrace::service::QueryResult ans = db.query(query);
 
+        nlohmann::json out;
+        out["total"] = ans.total;
+        out["items"] = nlohmann::json::array();
+        for (const metrace::core::Item* it : ans.items) {
+            out["items"].push_back(it->toJson());
+        }
         
+        res.set_content(out.dump(), kJsonType);
     });
 }
 

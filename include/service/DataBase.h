@@ -29,7 +29,7 @@ struct ItemQuery {
 
 struct QueryResult {
     std::size_t total;
-    std::vector<metrace::core::Item*> items;
+    std::vector<const metrace::core::Item*> items;
 };
 
 struct ItemPatch {
