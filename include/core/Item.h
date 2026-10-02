@@ -56,13 +56,17 @@ public:
 
     int getId() const { return id; }
     const std::string& getType() const { return type; }
+    const std::string& getTitle() const { return title; }
     const std::string& getAuthor() const { return author; }
     const std::string& getDescription() const { return description; }
     const std::string& getDate() const { return date; }
     double getProgress() const { return progress; }
     int getScore() const { return score; }
-    const std::string& getComment() { return comment; }
-    const std::vector<Tag>& getTags() { return tags; }
+    const std::string& getComment() const { return comment; }
+    const std::vector<Tag>& getTags() const { return tags; }
+    const std::string& getCreatedAt() const { return created_at; }
+
+    bool hasTag(const Tag& tag) const;
 
     // JSON serialization and deserialization
     nlohmann::json toJson() const;

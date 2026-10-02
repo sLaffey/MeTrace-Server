@@ -12,6 +12,16 @@ bool checkType(const std::string& type)
     return false;
 }
 
+bool Item::hasTag(const Tag& tag) const
+{
+    for (const Tag& t : tags) {
+        if (t == tag) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief 仅通过 id 判断条目是否相等
 /// @param item 
 bool Item::operator == (const Item& item) const
@@ -22,6 +32,7 @@ bool Item::operator == (const Item& item) const
 nlohmann::json Item::toJson() const
 {
     nlohmann::json j;
+    j["id"] = id;
     j["type"] = type;
     j["title"] = title;
     j["author"] = author;
@@ -39,6 +50,7 @@ nlohmann::json Item::toJson() const
 Item Item::fromJson(const nlohmann::json& j)
 {
     Item item;
+    item.id = j["id"];
     item.type = j["type"].get<std::string>();
     item.title = j["title"].get<std::string>();
     item.author = j["author"].get<std::string>();
@@ -47,7 +59,7 @@ Item Item::fromJson(const nlohmann::json& j)
     item.progress = j["progress"].get<double>();
     item.score = j["score"].get<int>();
     item.comment = j["comment"].get<std::string>();
-    item.tags = j["comment"].get<std::vector<std::string>>();
+    item.tags = j["tags"].get<std::vector<metrace::core::Tag>>();
     item.created_at = j["created_at"].get<std::string>();
     item.updated_at = j["updated_at"].get<std::string>();
     return item;
