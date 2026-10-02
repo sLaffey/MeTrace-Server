@@ -95,6 +95,8 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         }
 
         const auto& query = parsed_query.value();
+        const auto& ans = db.query(query);
+
         
     });
 }

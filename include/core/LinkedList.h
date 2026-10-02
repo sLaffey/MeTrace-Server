@@ -14,8 +14,10 @@ private:
     };
 
     Node* head;
+    std::size_t size;
+
 public:
-    LinkedList() : head(nullptr) {}
+    LinkedList() : head(nullptr), size(0) {}
     ~LinkedList() {
         Node* cur = head;
         while (cur) {
@@ -25,11 +27,14 @@ public:
         }
     }
 
+    std::size_t getSize() const { return size; }
+
     /// @brief 在链表头部插入一个值，会进行一次复制构造
     /// @param value 
     /// @return 指向新插入元素的指针
     const T* insert(const T& value)
     {
+        ++size;
         Node* t = new Node(value);
         t->next = head;
         head = t;
@@ -47,6 +52,7 @@ public:
                 pre->next = cur->next;
                 if (cur == head) head = cur->next;
                 delete cur;
+                --size;
                 return true;
             }
             pre = cur;
@@ -114,6 +120,7 @@ public:
                 pre->next = cur->next;
                 if (cur == head) head = cur->next;
                 delete cur;
+                --size;
                 return true;
             }
             pre = cur;

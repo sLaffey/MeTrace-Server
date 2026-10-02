@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include <cstddef>
 #include <functional>
 
@@ -91,6 +92,14 @@ public:
 
     const T& top() const {
         return data[0];
+    }
+
+    bool empty() const {
+        return size == 0;
+    }
+
+    std::size_t getSize() const {
+        return size;
     }
 };
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include <string>
 #include <optional>
 
@@ -24,6 +25,11 @@ struct ItemQuery {
     bool descending = true;
     int limit = 20;
     int offset = 0;
+};
+
+struct QueryResult {
+    std::size_t total;
+    std::vector<metrace::core::Item*> items;
 };
 
 struct ItemPatch {
@@ -63,6 +69,8 @@ public:
     const metrace::core::Item* createItem(const metrace::core::Item& item);
 
     bool createTag(const metrace::core::Tag& tag);
+
+    const QueryResult query(const metrace::service::ItemQuery& query) const;
 };
 
 } // namespace metrace::service

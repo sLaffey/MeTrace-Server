@@ -4,8 +4,50 @@
 #include <nlohmann/json.hpp>
 
 #include "service/DataBase.h"
+#include "core/Heap.h"
 
 namespace metrace::service {
+
+namespace {
+
+bool byCreatedAt(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
+{
+    const int c = a.getCreatedAt().compare(b.getCreatedAt());
+    return c != 0 && (desc ? c > 0 : c < 0);
+}
+
+bool byScore(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
+{
+    const bool a_unscored = a.getScore() == 0, b_unscored = b.getScore() == 0;
+    if (a_unscored != b_unscored) return b_unscored; // 保证已评在未评前
+    return desc ? a.getScore() > b.getScore() : a.getScore() < b.getScore();
+}
+
+bool byDate(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
+{
+    const int c = a.getDate().compare(b.getDate());
+    return c != 0 && (desc ? c > 0 : c < 0);
+}
+
+bool byTitle(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
+{
+    const int c = a.getTitle().compare(b.getTitle());
+    return c != 0 && (desc ? c > 0 : c < 0);
+}
+
+using FieldCompare = bool(*)(const metrace::core::Item& a, const metrace::core::Item& b, bool);
+constexpr FieldCompare kFieldCompare[] = {byCreatedAt, byScore, byDate, byTitle};
+static_assert(std::size(kFieldCompare) == 4, "更改 kSortField 时同步修改此处");
+
+bool better(const metrace::core::Item& a, const metrace::core::Item& b, const metrace::service::SortField f, bool desc)
+{
+    const FieldCompare fc = kFieldCompare[static_cast<std::size_t>(f)];
+    if (fc(a, b, desc)) return true;
+    if (fc(b, a, desc)) return false;
+    return a.getId() < b.getId();
+}
+
+} // namespace
 
 DataBase::DataBase(const std::string& dbPath)
 {
@@ -174,6 +216,46 @@ void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
 bool DataBase::removeTag(const metrace::core::Tag& tag)
 {
     return tags.remove(tag);
+}
+
+/// @brief 按照 @param query 指定的规则查询 items 列表
+/// @param query 
+/// @return QueryResult 包含符合条件的 item 总数（用于计算总页数），以及本页的 items 列表
+const QueryResult DataBase::query(const metrace::service::ItemQuery& query) const
+{
+    metrace::core::Heap<const metrace::core::Item*> heap(
+        std::min<std::size_t>(query.offset + query.limit, items.getSize()),
+        [&query](const metrace::core::Item* a, const metrace::core::Item* b) -> bool {
+            return better(*b, *a, query.sort_field, query.descending);
+        }
+    );
+    std::size_t total = 0;
+
+    items.forEach([&heap, &query, &total](const metrace::core::Item& item) {
+        if (query.type.has_value() && item.getType() != query.type.value()) {
+            return;
+        }
+        if (query.tag.has_value() && !item.hasTag(query.tag.value())) {
+            return;
+        }
+        ++total;
+        heap.push(&item);
+    });
+
+    std::vector<const metrace::core::Item*> res;
+    res.reserve(heap.getSize());
+    while (!heap.empty()) {
+        res.push_back(heap.top());
+        heap.pop();
+    }
+    std::reverse(res.begin(), res.end());
+
+    const std::size_t begin = std::min<std::size_t>(query.offset, res.size());
+    const std::size_t end = std::min(begin + static_cast<std::size_t>(query.offset), res.size());
+    QueryResult query_result;
+    query_result.items.assign(res.begin() + begin, res.begin() + end);
+    query_result.total = total;
+    return query_result;
 }
 
 } // namespace metrace::service
