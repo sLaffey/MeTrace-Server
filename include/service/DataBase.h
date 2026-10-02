@@ -39,11 +39,13 @@ struct ItemPatch {
 };
 
 class DataBase {
+private:
     int next_id = 0;
     metrace::core::LinkedList<metrace::core::Item> items;
-    metrace::core::LinkedList<metrace::core::Tag> tags;
-    
-    metrace::core::Trie trie;
+    metrace::core::Trie tags;
+
+    void registerTags(const std::vector<metrace::core::Tag>& tags);
+    void removeTag(const metrace::core::Tag& tag);
 
 public:
     DataBase() = default;
@@ -60,10 +62,7 @@ public:
     bool removeItem(int id);
     const metrace::core::Item* createItem(const metrace::core::Item& item);
 
-    const metrace::core::Tag* findTag(const metrace::core::Tag& tag) const;
-    const metrace::core::Tag* createTag(const metrace::core::Tag& tag);
-    bool removeTag(const metrace::core::Tag& tag);
-    const metrace::core::Tag* updateTag(const metrace::core::Tag& oldTag, const metrace::core::Tag& newTag);
+    bool createTag(const metrace::core::Tag& tag);
 };
 
 } // namespace metrace::service

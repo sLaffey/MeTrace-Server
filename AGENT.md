@@ -3,6 +3,7 @@
 > 本文件是项目的开发指南与需求基线，供两位开发者以及任何后续接手的 AI Agent 共同遵循。
 > 接手开发的 Agent 请先读 §3「现状快照」定位进度，再按 §13 任务清单继续；**已定型的设计决策（§3.3）不要推翻重议**，有疑问先读对应章节的设计理由。
 > 接口路径、数据模型、数据结构要求以本文档为准；**新增接口或修改字段前，先更新本文档，再写代码**。
+> 本文件同时是 **AI 辅助开发的记忆载体**：辅助过程中确认的事实、已否决的方案、开放问题与讨论倾向记录在 §18，主要供 AI 使用；拍板后结论回写对应正文并从 §18 移除。
 
 ---
 
@@ -44,7 +45,7 @@
 - [x] `src/main.cpp`：参数/环境变量解析、`db.load()` fail-fast → `db.save()`；HTTP 启动段随 Router 完成度打开
 - [x] 数据模型定稿（`include/core/Item.h` 为权威，见 §7）：type 为字符串、score 为 int [1-100]、`Tag` 为 `std::string` 别名
 - [x] `LinkedList`：insert（头插）/ remove（按 operator==，即按 id）
-- [x] `Trie`：insert / query / remove（`removeRec` 递归释放空节点方案已定）
+- [x] `Trie`：insert / query / remove；修缮完成（2026-10-02 核对代码：`next[256]`、`unsigned char` 下标、Node 递归析构、Node/Trie 删拷贝）
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删
 - [x] `DataBase::load`：全量加载 items / tags / next_id
 - [x] `http/Router` 骨架起步（`/`、部分 `/api/items`）
@@ -52,8 +53,8 @@
 ### 3.2 待办（按优先级，展开见 §13）
 
 1. Item 补口子：恢复用户字段 setter、`toJson/fromJson` 覆盖 12 字段、服务端字段（id/时间戳）写入口子（`friend class DataBase`）、`touch()`
-2. LinkedList 补齐：`forEach` / `find` / `clear` / `size`；**删除拷贝**（三法则）
-3. Trie 修缮：`next[128]`→`[256]`、下标统一 `unsigned char`、Node 递归析构、删拷贝
+2. LinkedList 补齐：`forEach` / `find` / `clear` / `size`（find/forEach 各配非 const 重载，PUT 改值用）；**删除拷贝**（三法则）
+3. Trie 接管全局标签表（2026-10-02 定，§7.3）：补 `collect`/`size` 口子、`insert` 改返回"是否新插入"；删 `LinkedList<Tag>` 成员；load（全量校验丢弃 §7.3①）/ save / GET /api/tags 改造；写点 `registerTags` 收口（§7.3②）
 4. DataBase 核心：`std::mutex`、`ItemQuery/SortField/ListResult`、CRUD 方法（**listItems 含 Top-N 堆，从 Router.cpp 挪入**）、save 原子写
 5. Router 收口：调用 `db.listItems` 替换本地堆逻辑；include 卫生（§5.3）
 6. HashTable 实现并接入 getItem/updateItem/deleteItem（id → `Item*` 索引）
@@ -72,7 +73,7 @@
 | 堆容量 | `min(offset + limit, items.size())` | offset 无上界，防恶意参数撑爆分配 |
 | 错误通道 | 服务层一律返回值（`bool`/指针/`optional`），不抛异常；异常仅用于库边界与进程兜底 | 失败通道数量 = 真实失败模式数量 |
 | load/save 失败 | load 失败 → 日志 + 退出进程（fail-fast）；save 失败 → 日志 + 该请求回 500，进程继续 | save 半途失败绝不退出服务器 |
-| PUT 语义 | 仅 4 个用户字段可改（progress/score/comment/tags），无 null 语义，空串/0 表空 | Item.h 顶部注释的编辑性约定 |
+| PUT 语义 | 除服务端自动管理字段（id/created_at/updated_at）外，全部 9 个用户字段可改（type/title/author/description/date/progress/score/comment/tags），缺省=不改；无 null 语义，空串/0 表空（2026-10-02 修订，原"仅 4 字段"作废） | Item.h 顶部注释的编辑性约定 |
 | 模板 vs 具体 | LinkedList/Heap 模板；HashTable `template<typename V>` 键固定 int；Trie/Item 具体 | 各取所需（§9） |
 
 ---
@@ -216,17 +217,17 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 - **JSON 中不出现 null**，一切"未知/空"用空串或 0 表达；
 - `operator==` 按 **id** 判等（全项目唯一身份判据）；
-- 可编辑字段仅 4 个：`progress/score/comment/tags`（PUT 白名单）；`type/title/author/description/date` 创建后只读；
+- 可编辑字段 9 个：`type/title/author/description/date/progress/score/comment/tags`（PUT 白名单，2026-10-02 修订）；仅 `id`、`created_at`、`updated_at` 服务端自动管理、只读；
 - 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`；
 - 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入），`setTags(std::vector<Tag>)` 按值 + `std::move`。
 
 ### 7.2 序列化
 
-`toJson/fromJson` 覆盖**全部 12 字段**。已知历史 bug 勿复发：`j["description"] = j["description"]` 自赋值、`tags` 误读 `j["comment"]`、type 必须经 `kItemTypeName` 映射。
+`toJson/fromJson` 覆盖**全部 12 字段**。已知历史 bug 勿复发：`j["description"] = j["description"]` 自赋值、`tags` 误读 `j["comment"]`、type 必须经 `kItemTypeName` 映射；save 曾把元素 `push_back` 到根对象而非 `data["items"]`/`data["tags"]` 子数组（非空库必抛 type_error.308，2026-10-02 已修复）。
 
 ### 7.3 Tag
 
-`typedef std::string Tag`。全局标签表是 `LinkedList<Tag>` 的名字列表：打标签时自动创建不存在的名字；删除条目不级联删标签（孤儿标签是可接受的简化）。标签接口**无 id 字段**（见 §8.2），因此文件里 tags 存字符串数组。
+`typedef std::string Tag`。全局标签表是 **`Trie`**（2026-10-02 定案，见 §9.2）：标签是"只增（+undo 删）的名字集合"，Trie 原生覆盖其全部操作，且**不设 `LinkedList<Tag>` 双份表**——一个事实一个家，双表必欠同步义务（同 §9.5 的教训）。条目内 tags 仍是 `vector<Tag>` **按值**存名字（过滤二分、序列化、undo 快照全靠值语义）；打标签时自动创建不存在的名字（注册进表）；删除条目不级联删标签（孤儿标签是可接受的简化）；表与条目的同步细则（2026-10-02 定）：目标不变量"条目引用的名字 ⊆ 表"**由构造保证**——① load 全量校验：条目引用了表中不存在的名字（幽灵引用）则丢弃并打 warn 日志，表为权威（文件是幽灵的唯一非 bug 入口）；② 写点收口：条目获得标签的写点（create/update/将来 undo 重放）统一走私有 `registerTags` 注册；③ **读路径永不校验、永不变异**——读时丢弃会破坏只读契约、与 undo 快照振荡、制造读导致的内存/磁盘分叉；④ 将来引入标签删除必须是主动的锁内方法（有引用则拒绝，或锁内扫描摘除引用），不靠读路径惰性收敛。标签接口**无 id 字段**（见 §8.2），文件里 tags 存字符串数组（save 时由 `collect` 产出，天然有序）；改名已否决指针方案并暂缓（§17）。
 
 ---
 
@@ -249,7 +250,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | GET | `/api/items` | 条目列表 | `?type=&tag=&sort=&limit=&offset=` | `{"total":N,"items":[Item,...]}` |
 | POST | `/api/items` | 新增条目 | 创建字段（type、title 必填） | 201 + Item |
 | GET | `/api/items/{id}` | 单个条目 | — | Item |
-| PUT | `/api/items/{id}` | 部分更新 | **仅** progress/score/comment/tags，缺省=不改 | Item |
+| PUT | `/api/items/{id}` | 部分更新 | 全部 9 个用户字段（type/title/author/description/date/progress/score/comment/tags），缺省=不改；id/created_at/updated_at 只读 | Item |
 | DELETE | `/api/items/{id}` | 删除条目 | — | 204 |
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"items":["科幻",...]}`（**名字数组，无 id**） |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | 201 + `{"name":"科幻"}` |
@@ -258,11 +259,13 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | GET | `/api/search` | 前缀搜索（计划） | `?q=&type=&limit=&offset=` | 同列表 |
 | GET | `/api/stats` | 统计聚合（可选） | `?type=` | `{total,by_type,score_dist}` |
 
+请求体校验（2026-10-02 定）：`POST /api/tags` 的 `name` 必填、非空、string、≤50 字符；条目 `tags` ≤20 个——违约一律 **400，不截断**（长度/个数超限按格式错处理，不适用 §8.3 的"数值越界宽容"）。POST/PUT 中出现的 `type`、`title` 按 POST 同规校验（type 过 §8.3 白名单、title 非空 ≤200），违约 400。
+
 ### 8.3 参数细则（GET /api/items 为范式，其余列表接口同构）
 
 | 参数 | 规则 |
 |---|---|
-| `type` | 白名单 null/book/movie/movie，非法 → 400 |
+| `type` | 白名单 null/book/movie/music，非法 → 400（`null` = 未分类，完整语义见 §18） |
 | `tag` | 任意字符串，按名精确匹配，缺省不过滤 |
 | `sort` | `[-]created_at/score/date/title`，默认 `-created_at`；`-` 前缀=倒序；非法 → 400 |
 | `limit` | 非数字 → 400；越界 → **静默截断**到 1~100（枚举非法报错、数值越界宽容，是刻意的不对称） |
@@ -272,7 +275,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 ### 8.4 撤销/重做语义
 
-进程内存双栈、不分会话、重启清空；仅写操作入栈（POST/PUT/DELETE items、POST tags）；`Action{kind,itemId,before,after,tagName,description}` 记录反向执行所需快照（Update 记 before/after，Create 记 after，Delete 记 before）；撤销 Create=删除、撤销 Update=恢复 before、撤销 Delete=重插 before；栈空 → 400 `nothing to undo`；容量 100 丢最旧；新写操作清空 redo 栈；撤销/重做本身不入栈。
+进程内存双栈、不分会话、重启清空；仅写操作入栈（POST/PUT/DELETE items、POST tags）；`Action{kind,itemId,before,after,tagName,description}` 记录反向执行所需快照（Update 记 before/after，Create 记 after，Delete 记 before）；撤销 Create=删除、撤销 Update=恢复 before、撤销 Delete=重插 before；栈空 → 400 `nothing to undo`；容量 100 丢最旧；新写操作清空 redo 栈；撤销/重做本身不入栈。**幂等且无状态变化的写不入栈**（如 POST /api/tags 撞已有名——撤销不该删除用户未曾创建的东西），入栈判据精确说是"状态变化"而非"写操作"；**新增写操作必须入栈**（含将来的 rename），这是"undo 路径不可能产生幽灵标签引用"推导（LIFO + 全量入栈 + 只丢最旧）成立的前提，见 §7.3。
 
 ### 8.5 推荐语义
 
@@ -289,12 +292,13 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **三法则**：自定义析构已存在，必须 `= delete` 拷贝构造与拷贝赋值
 - 纪律：载荷（data）经 `T*` 开放读写；结构变更只走成员函数；**遍历中禁止 insert/remove**（需要就先收集后处理）；辅助结构（HashTable）持有的指针必须与结构变更**同锁同步**
 
-### 9.2 Trie（前缀树，search 用）
+### 9.2 Trie（前缀树，全局标签表）
 
-- `Node{is_word, cnt_next, next[128]}` → **改 `next[256]`**：中文 UTF-8 字节 ≥0x80，128 会越界；所有下标统一 `unsigned char`（char 有符号，负下标是 UB，编译警告 `-Wchar-subscripts` 即此问题）
-- `removeRec` 递归方案已定：后序递归返回"节点是否变空"，父层负责 delete + 断链 + `--cnt_next`；head 是值成员永不删
-- **Node 递归析构**：`~Node(){ for (auto c : next) if (c) delete c; }`，`~Trie() = default` 即可。递归深度 = 最长键字节数（≤约 600），栈安全；勿改显式栈（递归的隐式栈只占 O(深度)，显式栈积压未访问兄弟，内存反而差）
-- Trie 与 Node 均**删除拷贝**；`operator[]` 的"自动建节点"语义只允许 insert 使用，query/remove 走判空分支（否则删不存在的词会凭空建节点）
+- **角色（2026-10-02 定，§7.3）**：Trie 即全局标签表本体——查重 `query` O(L)、有序枚举/收集 `collect`（DFS 按 0..255 字节序访问孩子 ⇒ 输出即 UTF-8 字节字典序，正是 GET /api/tags 与 save 的输出序）、undo 删除 `remove`（removeRec 顺带清空链）；/api/search 若实施默认线性前缀扫描、不依赖 Trie（§18）
+- 修缮已完成（2026-10-02 核对）：`next[256]`（中文 UTF-8 字节 ≥0x80，128 会越界）；下标统一 `unsigned char`（char 有符号，负下标是 UB，警告 `-Wchar-subscripts` 即此问题）；Node 递归析构（递归深度 = 最长键字节数 ≤约 600，栈安全；勿改显式栈——显式栈积压未访问兄弟，内存反而差）；Node/Trie 删拷贝
+- `removeRec` 递归方案：后序递归返回"节点是否变空"，父层负责 delete + 断链 + `--cnt_next`；head 是值成员永不删
+- **待补口子**：`collect(std::vector<std::string>&) const`；O(1) `size()`（words_ 计数，insert/remove 维护）；`insert` 建议改返回 bool（是否新插入，服务同名幂等）
+- `operator[]` 的"自动建节点"语义只允许 insert 使用，query/remove 走判空分支（否则删不存在的词会凭空建节点）
 
 ### 9.3 Heap（固定容量堆，已实现）
 
@@ -327,7 +331,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 规格见 §8.4 / §8.5。UndoStack 为双栈，`push/undo/redo` 均摊 O(1)，容量 100，超出丢最旧。结构 → 真实调用方对应表（答辩必问）：
 
-`LinkedList` → 全部 CRUD；`Heap` → listItems / recommend；`HashTable` → getItem/update/delete；`Trie` → search；`UndoStack` → undo/redo；`Recommender` → recommend。**只写不用的结构不算数**。
+`LinkedList` → 全部 CRUD；`Heap` → listItems / recommend；`HashTable` → getItem/update/delete；`Trie` → 标签表（createTag 查重 / GET /api/tags / save 收集 / undo 删除），search 若实施走线性扫描（§18）；`UndoStack` → undo/redo；`Recommender` → recommend。**只写不用的结构不算数**。
 
 ---
 
@@ -452,3 +456,16 @@ HTTP 层共同维护。每人必须能独立讲清自己结构的定义、操作
 
 - 条目只读信息（标题/作者/日期/简介）从外部数据源（如 NeoDB）导入，丰富用户上传之外的创建途径
 - 数据量或并发访问显著增长时，可将存储层替换为嵌入式数据库，上层 HTTP 与业务接口保持不变
+- 标签改名（暂缓，基本开发完成后视客户端需要再决定）：接口建议 `PUT /api/tags/{name}`，请求体 `{"name":"新名"}`。实现方案已论证：锁内单方法完成"标签表 remove+insert + 遍历条目替换名字（保持有序去重）"，O(n log k)，原子性由 mutex 保证而非数据结构；undo 记 RenameTag（撤销 = 反向改名），需同步更新 §8.4；前置口子：LinkedList 补一个非 const 的 forEach 重载（值可变、结构不可变）。已否决勿再议：把 item 的 tags 改成指向标签对象的指针来实现"一处改名处处生效"——Tag 无独立于名字的身份，指针共享与 JSON 值语义持久化、undo 快照、按名索引的同步全部冲突，省下的只是一次微秒级扫描
+
+---
+
+## 18. 开放问题与讨论记录（AI 辅助开发记忆）
+
+> 本节记录 AI 辅助开发过程中确认的事实、已否决的方案与待讨论的开放问题，主要供 AI 接手时对齐上下文。条目拍板后，结论应回写进对应正文章节并从此处移除。
+
+- **【讨论中】`type=null`（未分类）的完整语义**（2026-10-02 确认方向）：§8.3 白名单含 `null` 意为"筛未分类条目"，但未分类条目如何产生未定（创建时 type 可否缺省？），与 §7.1 现行"`null` 仅内部占位、JSON 中不出现"的约定冲突；拍板后需同步修订 §7.1/§8.2。
+- **【已记录方向】标签 id 化（长期）**：标签若引入 id 与编辑功能，条目改存 `vector<int>`、表存 id→name，改名退化为表内 O(1) 更新，名字镜像问题整体消失——"身份独立于可变属性"（§17 判据）的正面应用；届时 §7.3 同步细则整体重写。
+- **【已记录倾向】/api/search 实现方案**：默认线性前缀过滤（复用 listItems 管道，规模账同 §15"为什么不用索引"的答案）；给 Trie 加 payload（词节点挂 id 列表）成本高（标题可重复、条目删除需维护），收益要大数据量才兑现。实施前再确认一次。
+- **【已否决】item.tags 指针共享**：见 §17 标签改名条目末尾，勿再议。
+- **【已定，回写于 §7.3/§8.4】标签 ↔ 条目同步**（2026-10-02 拍板）：load 全量校验丢弃+warn（表为权威）、写点 registerTags 收口、读路径永不变异、删除必须是主动锁内方法、幂等无状态变化的写不入 undo 栈。

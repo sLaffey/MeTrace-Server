@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <functional>
 
 namespace metrace::core {
 
@@ -40,15 +41,18 @@ private:
     Node head;
 
     bool removeRec(Node* cur, const std::string& s, std::size_t depth);
+    void forEachRec(const Node* cur, std::string& prefix, const std::function<void (const std::string&)>& func) const;
 
 public:
     Trie() = default;
     ~Trie() = default;
     Trie(const Trie&) = delete; // 防止浅拷贝带来的问题
 
-    void insert(const std::string& s);
+    bool insert(const std::string& s);
     void remove(const std::string& s);
-    bool query(const std::string& s) const;
+    bool find(const std::string& s) const;
+
+    void forEach(const std::function<void (const std::string&)>& func) const;
 };
 
 }

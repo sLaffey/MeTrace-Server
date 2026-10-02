@@ -33,14 +33,23 @@ bool DataBase::load(const std::string& dbPath)
     try {
         json data = json::parse(file);
         int max_id = 0;
+        for (const auto& itemJson : data["tags"]) {
+            tags.insert(itemJson);
+        }
 
         for (const auto &itemJson : data["items"]) {
             metrace::core::Item item = metrace::core::Item::fromJson(itemJson);
+            std::vector<metrace::core::Tag> kept_tags;
+            for (const auto& tag : item.getTags()) {
+                if (!tags.find(tag)) {
+                    std::cerr << "[DataBase] Warning: Tag " << tag << " in item " << item.getId()
+                        << " not found in database, discarded." << std::endl;
+                }
+                else kept_tags.push_back(tag);
+            }
+            item.setTags(kept_tags);
             items.insert(item);
             max_id = std::max(max_id, item.getId());
-        }
-        for (const auto& itemJson : data["tags"]) {
-            tags.insert(itemJson);
         }
         next_id = data.value("next_id", 0);
     } catch (const nlohmann::json::exception& e) {
@@ -61,9 +70,9 @@ bool DataBase::save(const std::string& dbPath) const
     json data;
     data["next_id"] = next_id;
     data["items"] = json::array();
-    items.forEach([&data] (const metrace::core::Item& item) { data.push_back(item.toJson()); });
+    items.forEach([&data] (const metrace::core::Item& item) { data["items"].push_back(item.toJson()); });
     data["tags"] = json::array();
-    tags.forEach([&data] (const metrace::core::Tag& tag) { data.push_back(tag); });
+    tags.forEach([&data] (const metrace::core::Tag& tag) { data["tags"].push_back(tag); });
 
     const fs::path tmp = fs::path(dbPath) += ".tmp";
     {
@@ -142,28 +151,12 @@ const metrace::core::Item* DataBase::createItem(const metrace::core::Item& item)
     return items.insert(item);
 }
 
-/// @brief 查找标签
-/// @param tag 
-/// @return 返回该标签的指针，不存在则为 nullptr
-const metrace::core::Tag* DataBase::findTag(const metrace::core::Tag& tag) const
-{
-    return tags.find(tag);
-}
-
 /// @brief 插入新标签
 /// @param tag 
-/// @return 指向新标签的指针
-const metrace::core::Tag* DataBase::createTag(const metrace::core::Tag& tag)
+/// @return 若已经存在则返回 false
+bool DataBase::createTag(const metrace::core::Tag& tag)
 {
     return tags.insert(tag);
-}
-
-/// @brief 删除标签
-/// @param tag 
-/// @return 是否成功删除
-bool DataBase::removeTag(const metrace::core::Tag& tag)
-{
-    return tags.remove(tag);
 }
 
 } // namespace metrace::service
