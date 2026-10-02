@@ -159,4 +159,21 @@ bool DataBase::createTag(const metrace::core::Tag& tag)
     return tags.insert(tag);
 }
 
+void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
+{
+    for (const auto& tag : _tags) {
+        tags.insert(tag);
+    }
+}
+
+/// @brief 删除标签
+/// @details 删除标签时不会删除条目中引用的标签，条目中引用的标签会在加载数据库时被丢弃
+/// @note 该函数不会检查条目中是否引用了该标签，调用者需要自行保证
+/// @param tag 
+/// @return 若标签已被删除或不存在返回 false
+bool DataBase::removeTag(const metrace::core::Tag& tag)
+{
+    return tags.remove(tag);
+}
+
 } // namespace metrace::service

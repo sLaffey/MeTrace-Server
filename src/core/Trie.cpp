@@ -2,6 +2,11 @@
 
 namespace metrace::core {
 
+/// @brief 递归删除单词
+/// @param cur 
+/// @param s 
+/// @param depth 
+/// @return 若单词已不存在返回 false
 bool Trie::removeRec(Node* cur, const std::string& s, std::size_t depth)
 {
     if (depth == s.size()) {
@@ -49,9 +54,9 @@ bool Trie::insert(const std::string& s)
     return true;
 }
 
-void Trie::remove(const std::string& s)
+bool Trie::remove(const std::string& s)
 {
-    removeRec(&head, s, 0);
+    return removeRec(&head, s, 0);
 }
 
 bool Trie::find(const std::string& s) const

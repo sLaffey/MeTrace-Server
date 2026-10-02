@@ -49,7 +49,7 @@ public:
     Trie(const Trie&) = delete; // 防止浅拷贝带来的问题
 
     bool insert(const std::string& s);
-    void remove(const std::string& s);
+    bool remove(const std::string& s);
     bool find(const std::string& s) const;
 
     void forEach(const std::function<void (const std::string&)>& func) const;

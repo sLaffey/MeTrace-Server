@@ -45,7 +45,7 @@ private:
     metrace::core::Trie tags;
 
     void registerTags(const std::vector<metrace::core::Tag>& tags);
-    void removeTag(const metrace::core::Tag& tag);
+    bool removeTag(const metrace::core::Tag& tag);
 
 public:
     DataBase() = default;
