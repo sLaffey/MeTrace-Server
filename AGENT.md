@@ -262,7 +262,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 | 参数 | 规则 |
 |---|---|
-| `type` | 白名单 book/movie/movie，非法 → 400 |
+| `type` | 白名单 null/book/movie/movie，非法 → 400 |
 | `tag` | 任意字符串，按名精确匹配，缺省不过滤 |
 | `sort` | `[-]created_at/score/date/title`，默认 `-created_at`；`-` 前缀=倒序；非法 → 400 |
 | `limit` | 非数字 → 400；越界 → **静默截断**到 1~100（枚举非法报错、数值越界宽容，是刻意的不对称） |

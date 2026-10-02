@@ -13,6 +13,8 @@ static const std::string kItemTypeName[4] = {
     "null", "book", "movie", "music"
 };
 
+bool checkType(const std::string& type);
+
 /// @brief 条目类，表示一个条目对象
 /// @details 包含条目的基本信息，如标题、作者、简介、发布日期、观看进度、评分、评论、标签等
 /// 提供 JSON 序列化和反序列化功能

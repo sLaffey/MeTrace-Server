@@ -2,6 +2,16 @@
 
 namespace metrace::core {
 
+bool checkType(const std::string& type)
+{
+    for (const std::string& t : kItemTypeName) {
+        if (t == type) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// @brief 仅通过 id 判断条目是否相等
 /// @param item 
 bool Item::operator == (const Item& item) const

@@ -18,8 +18,8 @@ enum class SortField {
 };
 
 struct ItemQuery {
-    std::string type;
-    metrace::core::Tag tag;
+    std::optional<std::string> type;
+    std::optional<metrace::core::Tag> tag;
     SortField sort_field = SortField::CreatedAt;
     bool descending = true;
     int limit = 20;
