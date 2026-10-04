@@ -158,7 +158,7 @@ METRACE_PORT=9000 ./scripts/run.sh              # 用环境变量
 - 基础 URL：`http://127.0.0.1:8000`
 - 所有业务接口统一 `/api` 前缀；`/` 与 `/ping` 不加前缀
 - 请求与响应均为 `application/json; charset=utf-8`
-- ID 为 JSON 数字；时间格式 `YYYY-MM-DD HH:MM:SS`（**UTC**）
+- ID 为 JSON 数字；服务器管理的时间字段（`created_at`/`updated_at`）为 Unix **秒级时间戳**（UTC 整数），格式化展示由客户端负责；条目 `date` 为 `YYYY-MM-DD` 字符串
 - 列表接口支持 `limit`（默认 20，上限 100）与 `offset`（默认 0）
 - "未知 / 为空"统一用空串或 `0` 表达（未评分时 `score` 为 `0`），**响应中不出现 `null`**
 
@@ -230,8 +230,8 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | `score` | number | 评分 `1`~`100` 的整数，**`0` 表示未评分** |
 | `comment` | string | 短评，空串表示无 |
 | `tags` | string[] | 标签名称数组，按名称排序，单个条目最多 20 个 |
-| `created_at` | string | 创建时间（UTC），只读 |
-| `updated_at` | string | 更新时间（UTC），每次 PUT 自动刷新 |
+| `created_at` | number | 创建时间，Unix 秒级时间戳（UTC），只读 |
+| `updated_at` | number | 更新时间，Unix 秒级时间戳（UTC），每次 PUT 自动刷新 |
 
 条目字段分为两类：**用户可编辑**（`type`、`title`、`author`、`description`、`date`、`progress`、`score`、`comment`、`tags` 共 9 个，可通过 PUT 修改）与**只读**（`id`、`created_at`、`updated_at`，由服务端自动管理）。
 
@@ -271,8 +271,8 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
   "score": 90,
   "comment": "震撼",
   "tags": ["中国文学", "科幻"],
-  "created_at": "2026-10-01 10:00:00",
-  "updated_at": "2026-10-01 10:00:00"
+  "created_at": 1790848800,
+  "updated_at": 1790848800
 }
 ```
 
@@ -309,8 +309,8 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
       "progress": 1.0,
       "score": 98,
       "tags": ["中国文学", "科幻"],
-      "created_at": "2026-10-01 10:00:00",
-      "updated_at": "2026-10-01 10:30:00"
+      "created_at": 1790848800,
+      "updated_at": 1790850600
     }
   ]
 }

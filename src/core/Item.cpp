@@ -1,3 +1,6 @@
+#include <ctime>
+#include <cstdint>
+
 #include "core/Item.h"
 
 namespace metrace::core {
@@ -47,6 +50,9 @@ nlohmann::json Item::toJson() const
     return j;
 }
 
+/// @brief 从 json 创建 Item 对象，仅供 DataBase 从文件加载时使用
+/// @param j
+/// @return Item 对象实例
 Item Item::fromJson(const nlohmann::json& j)
 {
     Item item;
@@ -60,9 +66,39 @@ Item Item::fromJson(const nlohmann::json& j)
     item.score = j["score"].get<int>();
     item.comment = j["comment"].get<std::string>();
     item.tags = j["tags"].get<std::vector<metrace::core::Tag>>();
-    item.created_at = j["created_at"].get<std::string>();
-    item.updated_at = j["updated_at"].get<std::string>();
+    item.created_at = j["created_at"].get<std::int64_t>();
+    item.updated_at = j["updated_at"].get<std::int64_t>();
     return item;
+}
+
+/// @brief 从客户端 POST 的 json 构造 Item 对象
+/// @param j 
+/// @return Item 实例
+/// @note 合法性校验由 DataBase 保证，id 亦由 DataBase 管理
+Item Item::fromCreateJson(const nlohmann::json& j)
+{
+    Item item;
+
+    // title 和 type 不可缺失
+    item.title = j["title"].get<std::string>();
+    item.type = j["type"].get<std::string>();
+
+    // 其余可用默认值
+    item.author = j.value("author", "");
+    item.description = j.value("description", "");
+    item.date = j.value("date", "");
+    item.progress = j.value("progress", 0);
+    item.score = j.value("score", 0);
+    item.comment = j.value("comment", "");
+    item.tags = j.value("tags", std::vector<Tag>());
+
+    // 剩余 id created_at updated_at 由 DataBase 管理
+    return item;
+}
+
+void Item::touch()
+{
+    updated_at = std::time(nullptr);
 }
 
 } // namespace metrace::core

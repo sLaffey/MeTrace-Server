@@ -211,14 +211,14 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | `score` | `int` | number | **1~100，0 = 未评分**（此前文档写 1~10，已按 Item.h 修正） |
 | `comment` | `string` | string | 空串=无 |
 | `tags` | `vector<Tag>` | string[] | 名称数组，去重、按名称排序，≤20 个 |
-| `created_at` / `updated_at` | `string` | string | `YYYY-MM-DD HH:MM:SS`（UTC），服务端管理 |
+| `created_at` / `updated_at` | `std::int64_t` | number | Unix **秒级时间戳**（UTC），服务端管理；格式化展示归客户端（2026-10-03 修订，原为 UTC 格式化字符串） |
 
 约定：
 
 - **JSON 中不出现 null**，一切"未知/空"用空串或 0 表达；
 - `operator==` 按 **id** 判等（全项目唯一身份判据）；
 - 可编辑字段 9 个：`type/title/author/description/date/progress/score/comment/tags`（PUT 白名单，2026-10-02 修订）；仅 `id`、`created_at`、`updated_at` 服务端自动管理、只读；
-- 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`；
+- 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`（写入 `std::time(nullptr)` 的秒级值）；`date` 保持字符串不做时间戳化——它是用户输入的**日历日期**（可能不完整、无时刻语义），与服务器生成的**瞬间**（created_at/updated_at）是两种性质（2026-10-03 定）；
 - 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入），`setTags(std::vector<Tag>)` 按值 + `std::move`。
 
 ### 7.2 序列化
@@ -236,7 +236,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 ### 8.1 通用约定
 
 - 业务接口统一 `/api` 前缀；`/` 与 `/ping` 不加；请求/响应 `application/json; charset=utf-8`（`/` 例外，返回 text/plain）
-- 时间 `YYYY-MM-DD HH:MM:SS`（UTC）；列表接口 `limit`（默认 20，上限 100）+ `offset`（默认 0）
+- 时间字段（`created_at`/`updated_at`）为 Unix **秒级时间戳**（UTC，JSON number），格式化展示归客户端；条目 `date` 仍是 `YYYY-MM-DD` 字符串；列表接口 `limit`（默认 20，上限 100）+ `offset`（默认 0）
 - `total` = **满足过滤条件的总条数**（分页前统计，不受分页影响）
 - 错误体 `{"error":"..."}`；状态码即语义：200/201/204/400（参数非法）/404（不存在或无此路由）/500（服务端异常，含 save 失败）
 - ⚠️ httplib 陷阱：`set_error_handler` 对一切 ≥400 回调且**不清空 body**，兜底 404 必须先 `if (!res.body.empty()) return;`；挂 `set_exception_handler` 把漏网异常统一转 500；路径参数路由用正则 `R"(/api/items/(\d+))"`，`req.matches[1]` 取捕获组；不匹配（如 `/api/items/abc`）→ 404 属设计行为；请求体解析用非抛出版本 `json::parse(body, nullptr, false)` + `is_discarded()`

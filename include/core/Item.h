@@ -4,8 +4,11 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include "core/Tag.h"
+
+namespace metrace::service { class DataBase; }
 
 namespace metrace::core {
 
@@ -22,7 +25,7 @@ bool checkType(const std::string& type);
 class Item {
 
 private:
-    int id;                         // ID
+    int id = 0;                         // ID
     std::string type;               // 条目类型
     std::string title;              // 条目标题
     std::string author;             // 条目作者/导演/艺术家
@@ -32,10 +35,12 @@ private:
     int score;                      // 条目评分 [1-100] Item 类不负责校验
     std::string comment;            // 条目评论
     std::vector<Tag> tags;          // 条目标签
-    std::string created_at;         // 条目创建时间
-    std::string updated_at;         // 条目更新时间
+    std::int64_t created_at;         // 条目创建时间
+    std::int64_t updated_at;         // 条目更新时间
 
     Item() = default;
+
+    friend class ::metrace::service::DataBase; // 方便 DataBase 对 id 和时间进行管理
 
 public:
     Item(const Item&) = default;
@@ -64,13 +69,16 @@ public:
     int getScore() const { return score; }
     const std::string& getComment() const { return comment; }
     const std::vector<Tag>& getTags() const { return tags; }
-    const std::string& getCreatedAt() const { return created_at; }
+    std::time_t getCreatedAt() const { return created_at; }
 
     bool hasTag(const Tag& tag) const;
 
     // JSON serialization and deserialization
     nlohmann::json toJson() const;
     static Item fromJson(const nlohmann::json&);
+    static Item fromCreateJson(const nlohmann::json&);
+
+    void touch();
 };
 
-}
+} // namespace metrace::core
