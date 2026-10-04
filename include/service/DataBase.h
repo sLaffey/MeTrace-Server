@@ -66,7 +66,7 @@ public:
     const metrace::core::Item* getItem(int id) const;
     const metrace::core::Item* updateItem(int id, const metrace::service::ItemPatch& patch);
     bool removeItem(int id);
-    const metrace::core::Item* createItem(const metrace::core::Item& item);
+    const metrace::core::Item* createItem(metrace::core::Item item);
 
     bool createTag(const metrace::core::Tag& tag);
 

@@ -93,7 +93,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         res.set_content("MeTrace-Server is running", kJsonType);
     });
 
-    // /api/items 接口，返回 Item 列表
+    // GET /api/items 接口，返回 Item 列表
     server.Get("/api/items", [&db](const httplib::Request& req, httplib::Response& res) {
         const auto parsed_query = parseItemQuery(req);
         if (!parsed_query.has_value()) {
@@ -111,8 +111,14 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         for (const metrace::core::Item* it : ans.items) {
             out["items"].push_back(it->toJson());
         }
-        
+
         res.set_content(out.dump(), kJsonType);
+    });
+
+    // POST /api/items create an item, returns status code 201 and the item
+    server.Post("/api/items", [&db](const httplib::Request& req, const httplib::Response& res) {
+        metrace::core::Item item = metrace::core::Item::fromCreateJson(req.body);
+        
     });
 }
 

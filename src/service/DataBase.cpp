@@ -12,8 +12,7 @@ namespace {
 
 bool byCreatedAt(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
 {
-    const int c = a.getCreatedAt().compare(b.getCreatedAt());
-    return c != 0 && (desc ? c > 0 : c < 0);
+    return desc ? b.getCreatedAt() > a.getCreatedAt() : a.getCreatedAt() < b.getCreatedAt();
 }
 
 bool byScore(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
@@ -93,7 +92,7 @@ bool DataBase::load(const std::string& dbPath)
             items.insert(item);
             max_id = std::max(max_id, item.getId());
         }
-        next_id = data.value("next_id", 0);
+        next_id = std::max(data.value("next_id", 0), max_id + 1);
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[DataBase] Fatal: Can't load database file in " << dbPath << " with exception " << e.what() << std::endl;
         return false;
@@ -185,11 +184,14 @@ bool metrace::service::DataBase::removeItem(int id)
     return items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
 }
 
-/// @brief 插入新条目
+/// @brief 插入新条目，自动分配 id、创建和更新时间
 /// @param item 
 /// @return 指向新条目的指针
-const metrace::core::Item* DataBase::createItem(const metrace::core::Item& item)
+const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
 {
+    item.id = next_id++;
+    item.touch();
+    item.created_at = item.updated_at;
     return items.insert(item);
 }
 
@@ -218,7 +220,7 @@ bool DataBase::removeTag(const metrace::core::Tag& tag)
     return tags.remove(tag);
 }
 
-/// @brief 按照 @param query 指定的规则查询 items 列表
+/// @brief 按照 query 指定的规则查询 items 列表
 /// @param query 
 /// @return QueryResult 包含符合条件的 item 总数（用于计算总页数），以及本页的 items 列表
 const QueryResult DataBase::query(const metrace::service::ItemQuery& query) const
@@ -251,7 +253,7 @@ const QueryResult DataBase::query(const metrace::service::ItemQuery& query) cons
     std::reverse(res.begin(), res.end());
 
     const std::size_t begin = std::min<std::size_t>(query.offset, res.size());
-    const std::size_t end = std::min(begin + static_cast<std::size_t>(query.offset), res.size());
+    const std::size_t end = std::min(begin + static_cast<std::size_t>(query.limit), res.size());
     QueryResult query_result;
     query_result.items.assign(res.begin() + begin, res.begin() + end);
     query_result.total = total;
