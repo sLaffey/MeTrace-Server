@@ -25,18 +25,18 @@ bool checkType(const std::string& type);
 class Item {
 
 private:
-    int id = 0;                         // ID
-    std::string type;               // 条目类型
-    std::string title;              // 条目标题
-    std::string author;             // 条目作者/导演/艺术家
+    int id = 0;                     // ID
+    std::string type;               // 条目类型 要求须在四种合法类型之内
+    std::string title;              // 条目标题 必填，要求不超过 200 字符
+    std::string author;             // 条目作者/导演/艺术家 
     std::string description;        // 条目简介
     std::string date;               // 条目发布日期 TODO: 定义成单独的类
-    double progress;                // 条目观看进度
-    int score;                      // 条目评分 [1-100] Item 类不负责校验
+    double progress = 0;            // 条目观看进度 0-1 之间的浮点数
+    int score = 0;                  // 条目评分 0-100，0 表示未评分
     std::string comment;            // 条目评论
-    std::vector<Tag> tags;          // 条目标签
-    std::int64_t created_at;         // 条目创建时间
-    std::int64_t updated_at;         // 条目更新时间
+    std::vector<Tag> tags;          // 条目标签 每个标签不超过 50 字符
+    std::int64_t created_at = 0;    // 条目创建时间
+    std::int64_t updated_at = 0;    // 条目更新时间
 
     Item() = default;
 

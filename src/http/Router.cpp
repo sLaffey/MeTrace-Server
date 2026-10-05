@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/Item.h"
 #include "http/Router.h"
 #include "service/DataBase.h"
 
@@ -79,6 +80,20 @@ static std::optional<metrace::service::ItemQuery> parseItemQuery(const httplib::
     return q;
 }
 
+/// @brief 检查 Item 是否合法
+/// @param item 
+/// @details Item 格式见 Item 类定义 @cite /include/core/Item.h
+bool checkItem(const metrace::core::Item& item)
+{
+    if (!metrace::core::checkType(item.getType())) {
+        return false;
+    }
+    if (item.getTitle().empty() || item.getTitle().length() > 200) {
+        return false;
+    }
+    return true;
+}
+
 constexpr const char* kJsonType = "application/json; charset=utf-8";
 
 } // namespace
@@ -116,9 +131,19 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
     });
 
     // POST /api/items create an item, returns status code 201 and the item
-    server.Post("/api/items", [&db](const httplib::Request& req, const httplib::Response& res) {
+    server.Post("/api/items", [&db](const httplib::Request& req, httplib::Response& res) {
         metrace::core::Item item = metrace::core::Item::fromCreateJson(req.body);
         
+        if (!checkItem(item)) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid item members"})", kJsonType);
+            return;
+        }
+
+        const metrace::core::Item* ins = db.createItem(item);
+        res.status = 201;
+        res.set_content(ins->toJson(), kJsonType);
+        return;
     });
 }
 

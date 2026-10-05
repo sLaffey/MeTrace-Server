@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <algorithm>
 
 #include <nlohmann/json.hpp>
 
@@ -184,7 +185,7 @@ bool metrace::service::DataBase::removeItem(int id)
     return items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
 }
 
-/// @brief 插入新条目，自动分配 id、创建和更新时间
+/// @brief 插入新条目，自动去重和注册 tag、分配 id、创建和更新时间
 /// @param item 
 /// @return 指向新条目的指针
 const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
@@ -192,6 +193,8 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
     item.id = next_id++;
     item.touch();
     item.created_at = item.updated_at;
+    std::sort(item.tags.begin(), item.tags.end());
+    item.tags.erase(unique(item.tags.begin(), item.tags.end()), item.tags.end());
     return items.insert(item);
 }
 
