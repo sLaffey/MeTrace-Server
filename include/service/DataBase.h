@@ -41,7 +41,7 @@ struct ItemPatch {
     std::optional<double> progress;
     std::optional<int> score;
     std::optional<std::string> comment;
-    std::optional<std::vector<metrace::core::Tag>> tags; 
+    std::optional<std::vector<metrace::core::Tag>> tags;
 };
 
 class DataBase {
