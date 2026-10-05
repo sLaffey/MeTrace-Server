@@ -193,8 +193,8 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
     item.id = next_id++;
     item.touch();
     item.created_at = item.updated_at;
-    std::sort(item.tags.begin(), item.tags.end());
-    item.tags.erase(unique(item.tags.begin(), item.tags.end()), item.tags.end());
+    item.uniqueTags();
+    registerTags(item.tags);
     return items.insert(item);
 }
 

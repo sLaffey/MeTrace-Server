@@ -57,7 +57,7 @@ public:
     void setProgress(const double _progress) { progress = _progress; }
     void setScore(const int _score) { score = _score; }
     void setComment(const std::string& _comment) { comment = _comment; }
-    void setTags(const std::vector<Tag>& _tags) { tags = _tags; }
+    void setTags(const std::vector<Tag>& _tags) { tags = _tags; uniqueTags(); }
 
     int getId() const { return id; }
     const std::string& getType() const { return type; }
@@ -72,13 +72,13 @@ public:
     std::time_t getCreatedAt() const { return created_at; }
 
     bool hasTag(const Tag& tag) const;
+    void touch();
+    void uniqueTags();
 
     // JSON serialization and deserialization
     nlohmann::json toJson() const;
     static Item fromJson(const nlohmann::json&);
     static Item fromCreateJson(const nlohmann::json&);
-
-    void touch();
 };
 
 } // namespace metrace::core

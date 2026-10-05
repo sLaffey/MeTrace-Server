@@ -1,5 +1,6 @@
 #include <ctime>
 #include <cstdint>
+#include <algorithm>
 
 #include "core/Item.h"
 
@@ -99,6 +100,12 @@ Item Item::fromCreateJson(const nlohmann::json& j)
 void Item::touch()
 {
     updated_at = std::time(nullptr);
+}
+
+void Item::uniqueTags()
+{
+    std::sort(tags.begin(), tags.end());
+    tags.erase(unique(tags.begin(), tags.end()), tags.end());
 }
 
 } // namespace metrace::core
