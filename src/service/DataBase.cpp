@@ -274,7 +274,7 @@ const TagQueryResult DataBase::queryTag(const TagQuery& query) const
     res.tags.reserve(query.limit);
     tags.forEach([&](const std::string& tag) {
         ++res.total;
-        if (res.total > query.offset && res.total - query.offset <= query.limit) {
+        if (res.total > static_cast<std::size_t>(query.offset) && res.total - static_cast<std::size_t>(query.offset) <= query.limit) {
             res.tags.push_back(tag);
         }
     });
