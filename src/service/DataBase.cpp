@@ -259,8 +259,8 @@ const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& que
     }
     std::reverse(res.begin(), res.end());
 
-    const std::size_t begin = std::min<std::size_t>(query.offset, res.size());
-    const std::size_t end = std::min(begin + static_cast<std::size_t>(query.limit), res.size());
+    const std::size_t begin = std::min(query.offset, res.size());
+    const std::size_t end = std::min(begin + query.limit, res.size());
     ItemQueryResult query_result;
     query_result.items.assign(res.begin() + begin, res.begin() + end);
     query_result.total = total;
@@ -274,7 +274,7 @@ const TagQueryResult DataBase::queryTag(const TagQuery& query) const
     res.tags.reserve(query.limit);
     tags.forEach([&](const std::string& tag) {
         ++res.total;
-        if (res.total > static_cast<std::size_t>(query.offset) && res.total - static_cast<std::size_t>(query.offset) <= query.limit) {
+        if (res.total > query.offset && res.total - query.offset <= query.limit) {
             res.tags.push_back(tag);
         }
     });

@@ -23,8 +23,8 @@ struct ItemQuery {
     std::optional<metrace::core::Tag> tag;
     SortField sort_field = SortField::CreatedAt;
     bool descending = true;
-    int limit = 20;
-    int offset = 0;
+    std::size_t limit = 20;
+    std::size_t offset = 0;
 };
 
 struct ItemQueryResult {
@@ -33,8 +33,8 @@ struct ItemQueryResult {
 };
 
 struct TagQuery {
-    int limit = 20;
-    int offset = 0;
+    std::size_t limit = 20;
+    std::size_t offset = 0;
 };
 
 struct TagQueryResult {

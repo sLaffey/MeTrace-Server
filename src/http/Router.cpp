@@ -80,7 +80,7 @@ static std::optional<metrace::service::ItemQuery> parseItemQuery(const httplib::
             if (!parseIntStrict(v, limit)) return std::nullopt;
             if (limit < 1) limit = 1;
             if (limit > 100) limit = 100;
-            q.limit = limit;
+            q.limit = static_cast<std::size_t>(limit);
         }
     }
     if (req.has_param("offset")) {
@@ -225,7 +225,7 @@ static std::optional<metrace::service::TagQuery> parseTagQuery(const httplib::Re
             if (!parseIntStrict(v, limit)) return std::nullopt;
             if (limit < 1) limit = 1;
             if (limit > 100) limit = 100;
-            q.limit = limit;
+            q.limit = static_cast<std::size_t>(limit);
         }
     }
     if (req.has_param("offset")) {
