@@ -1,4 +1,8 @@
 #include <charconv>
+#include <limits>
+#include <utility>
+#include <optional>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -73,7 +77,9 @@ static std::optional<metrace::service::ItemQuery> parseItemQuery(const httplib::
         const std::string& v = req.get_param_value("limit");
         if (!v.empty()) {
             long long limit;
-            if (!parseIntStrict(v, limit) || limit < 0) return std::nullopt;
+            if (!parseIntStrict(v, limit)) return std::nullopt;
+            if (limit < 1) limit = 1;
+            if (limit > 100) limit = 100;
             q.limit = limit;
         }
     }
@@ -189,7 +195,7 @@ static std::optional<std::string> checkItemJson(const nlohmann::json& j)
 /// @return 错误信息，若为 nullopt 代表正常解析
 static std::optional<std::string> parseItemPatch(const nlohmann::json& body, metrace::service::ItemPatch& patch)
 {
-    if (!body.is_object()) {
+    if (!body.is_object() || body.is_discarded()) {
         return "Body must be a JSON object";
     }
     std::optional<std::string> ckres = checkItemJson(body);
@@ -216,7 +222,9 @@ static std::optional<metrace::service::TagQuery> parseTagQuery(const httplib::Re
         const std::string& v = req.get_param_value("limit");
         if (!v.empty()) {
             long long limit;
-            if (!parseIntStrict(v, limit) || limit < 0) return std::nullopt;
+            if (!parseIntStrict(v, limit)) return std::nullopt;
+            if (limit < 1) limit = 1;
+            if (limit > 100) limit = 100;
             q.limit = limit;
         }
     }
@@ -246,11 +254,11 @@ constexpr const char* kJsonType = "application/json; charset=utf-8";
 void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 {
     server.Get("/ping", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(R"({"status":"ok"})", kJsonType);
+        res.set_content(R"({"status":"ok","service":"MeTrace-Server"})", kJsonType);
     });
 
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content("MeTrace-Server is running", kJsonType);
+        res.set_content("MeTrace-Server is running", "text/plain; charset=utf-8");
     });
 
     // GET /api/items 接口，返回 Item 列表
@@ -337,7 +345,8 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         }
 
         metrace::service::ItemPatch patch;
-        std::optional<std::string> message = parseItemPatch(req.body, patch);
+        nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
+        std::optional<std::string> message = parseItemPatch(body, patch);
         if (message.has_value()) {
             res.status = 400;
             res.set_content(errorBody(message.value()), kJsonType);

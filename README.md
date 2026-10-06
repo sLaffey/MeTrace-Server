@@ -192,7 +192,7 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | GET | `/api/items/{id}` | 单个条目 | — | `Item` |
 | PUT | `/api/items/{id}` | 部分更新 | 9 个用户字段（`type`…`tags`），缺省=不改 | `Item` |
 | DELETE | `/api/items/{id}` | 删除条目 | — | `204`（无 body） |
-| GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"items":["科幻",...]}` |
+| GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}` |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{"name":"科幻"}` |
 | POST | `/api/undo` | 撤销上一次写操作 | — | `{"success":true,"action":"..."}` |
 | POST | `/api/redo` | 重做 | — | `{"success":true,"action":"..."}` |
@@ -212,7 +212,7 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | `item_id` | 条目 id | `/api/recommend` 缺省时返回全局高分榜（冷启动兜底） |
 | `topN` | 正整数，默认 10，上限 50 | 推荐条数 |
 
-取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit`/`offset` 数值越界则静默截断。
+取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit` 数值越界静默截断到 1~100，`offset` 为负返回 400。
 
 ### 数据模型
 
@@ -431,7 +431,9 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 ### 阶段 2：HTTP CRUD（进行中）
 
 - [x] `/api/items` 增删改查五路由 + GET `/api/tags`（Top-N 堆在 DataBase 内）
-- [ ] 写路径修复与 POST `/api/tags`、错误处理器收尾
+- [x] 写路径收口：统一校验（键白名单/类型/值域/tags 上限）、错误体规范、时间戳刷新与标签注册
+- [x] PUT body 解析修复、`limit` 契约截断 1~100（`limit=0` 曾致服务崩溃）、`/` 回 text/plain
+- [ ] POST `/api/tags`、错误处理器挂载与收尾
 - [ ] `tests/test_api.sh` 字段适配，断言全部通过
 
 ### 阶段 3：撤销重做与推荐（10.10~10.14）

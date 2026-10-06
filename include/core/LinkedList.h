@@ -28,6 +28,7 @@ public:
         }
     }
     LinkedList(const LinkedList&) = delete;
+    LinkedList& operator = (const LinkedList&) = delete;
 
     std::size_t getSize() const { return size; }
 

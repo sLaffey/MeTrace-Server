@@ -68,7 +68,7 @@ public:
     DataBase(const DataBase&) = delete;
     ~DataBase() = default;
 
-    DataBase(const std::string& dbPath);
+    explicit DataBase(const std::string& dbPath);
 
     bool save(const std::string& dbPath) const;
     bool load(const std::string& dbPath);
