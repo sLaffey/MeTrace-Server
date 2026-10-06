@@ -27,9 +27,19 @@ struct ItemQuery {
     int offset = 0;
 };
 
-struct QueryResult {
+struct ItemQueryResult {
     std::size_t total;
     std::vector<const metrace::core::Item*> items;
+};
+
+struct TagQuery {
+    int limit = 20;
+    int offset = 0;
+};
+
+struct TagQueryResult {
+    std::size_t total;
+    std::vector<metrace::core::Tag> tags;
 };
 
 struct ItemPatch {
@@ -70,7 +80,8 @@ public:
 
     bool createTag(const metrace::core::Tag& tag);
 
-    const QueryResult query(const metrace::service::ItemQuery& query) const;
+    const ItemQueryResult queryItem(const metrace::service::ItemQuery& query) const;
+    const TagQueryResult queryTag(const metrace::service::TagQuery& query) const;
 };
 
 } // namespace metrace::service

@@ -169,6 +169,30 @@ static std::optional<std::string> parseItemPatch(const nlohmann::json& body, met
     return std::nullopt;
 }
 
+static std::optional<metrace::service::TagQuery> parseTagQuery(const httplib::Request& req)
+{
+    metrace::service::TagQuery q;
+
+    if (req.has_param("limit")) {
+        const std::string& v = req.get_param_value("limit");
+        if (!v.empty()) {
+            long long limit;
+            if (!parseIntStrict(v, limit) || limit < 0) return std::nullopt;
+            q.limit = limit;
+        }
+    }
+    if (req.has_param("offset")) {
+        const std::string& v = req.get_param_value("offset");
+        if (!v.empty()) {
+            long long offset;
+            if (!parseIntStrict(v, offset) || offset < 0) return std::nullopt;
+            q.offset = offset;
+        }
+    }
+
+    return q;
+}
+
 constexpr const char* kJsonType = "application/json; charset=utf-8";
 
 } // namespace
@@ -193,7 +217,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         }
 
         const auto query = parsed_query.value();
-        const metrace::service::QueryResult ans = db.query(query);
+        const metrace::service::ItemQueryResult ans = db.queryItem(query);
 
         nlohmann::json out;
         out["total"] = ans.total;
@@ -277,7 +301,26 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
     });
 
     // GET /api/tags 返回所有 tags 列表
-    
+    server.Get("/api/tags", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::optional<metrace::service::TagQuery> q = parseTagQuery(req);
+
+        if (!q.has_value()) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid GET parameters"})", kJsonType);
+            return;
+        }
+
+        const metrace::service::TagQueryResult ans = db.queryTag(q.value());
+        nlohmann::json j;
+        j["total"] = ans.total;
+        j["tags"] = nlohmann::json::array();
+        for (const metrace::core::Tag& tag : ans.tags) {
+            j["tags"].push_back(tag);
+        }
+        
+        res.set_content(j.dump(), kJsonType);
+        return;
+    });
 }
 
 } // namespace metrace::http

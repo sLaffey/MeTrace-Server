@@ -1,11 +1,13 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
-#include "service/DataBase.h"
+#include "core/LinkedList.h"
 #include "core/Heap.h"
+#include "service/DataBase.h"
 
 namespace metrace::service {
 
@@ -226,7 +228,7 @@ bool DataBase::removeTag(const metrace::core::Tag& tag)
 /// @brief 按照 query 指定的规则查询 items 列表
 /// @param query 
 /// @return QueryResult 包含符合条件的 item 总数（用于计算总页数），以及本页的 items 列表
-const QueryResult DataBase::query(const metrace::service::ItemQuery& query) const
+const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& query) const
 {
     metrace::core::Heap<const metrace::core::Item*> heap(
         std::min<std::size_t>(query.offset + query.limit, items.getSize()),
@@ -257,10 +259,24 @@ const QueryResult DataBase::query(const metrace::service::ItemQuery& query) cons
 
     const std::size_t begin = std::min<std::size_t>(query.offset, res.size());
     const std::size_t end = std::min(begin + static_cast<std::size_t>(query.limit), res.size());
-    QueryResult query_result;
+    ItemQueryResult query_result;
     query_result.items.assign(res.begin() + begin, res.begin() + end);
     query_result.total = total;
     return query_result;
+}
+
+const TagQueryResult DataBase::queryTag(const TagQuery& query) const
+{
+    TagQueryResult res;
+    res.total = 0;
+    res.tags.reserve(query.limit);
+    tags.forEach([&](const std::string& tag) {
+        ++res.total;
+        if (res.total > query.offset && res.total - query.offset <= query.limit) {
+            res.tags.push_back(tag);
+        }
+    });
+    return res;
 }
 
 } // namespace metrace::service
