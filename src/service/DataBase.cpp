@@ -175,6 +175,8 @@ const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const 
     if (patch.score.has_value()) item->setScore(patch.score.value());
     if (patch.comment.has_value()) item->setComment(patch.comment.value());
     if (patch.tags.has_value()) item->setTags(patch.tags.value());
+    item->touch();
+    registerTags(item->getTags());
 
     return item;
 }

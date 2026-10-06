@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 
 namespace metrace::core {
@@ -26,6 +27,7 @@ public:
             cur = next;
         }
     }
+    LinkedList(const LinkedList&) = delete;
 
     std::size_t getSize() const { return size; }
 

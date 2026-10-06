@@ -69,7 +69,7 @@ public:
     int getScore() const { return score; }
     const std::string& getComment() const { return comment; }
     const std::vector<Tag>& getTags() const { return tags; }
-    std::time_t getCreatedAt() const { return created_at; }
+    std::int64_t getCreatedAt() const { return created_at; }
 
     bool hasTag(const Tag& tag) const;
     void touch();

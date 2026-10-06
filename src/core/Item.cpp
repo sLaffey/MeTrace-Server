@@ -75,7 +75,7 @@ Item Item::fromJson(const nlohmann::json& j)
 /// @brief 从客户端 POST 的 json 构造 Item 对象
 /// @param j 
 /// @return Item 实例
-/// @note 合法性校验由 DataBase 保证，id 亦由 DataBase 管理
+/// @note 合法性校验由 HTTP 层保证，id 等由 DataBase 管理
 Item Item::fromCreateJson(const nlohmann::json& j)
 {
     Item item;

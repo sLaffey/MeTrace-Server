@@ -103,6 +103,86 @@ bool checkItem(const metrace::core::Item& item)
     return true;
 }
 
+static std::optional<std::string> checkItemJson(const nlohmann::json& j)
+{
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const std::string& key = it.key();
+        if (key == "id" || key == "created_at" || key == "updated_at") {
+            return key + " is read-only";
+        }
+        else if (key == "type") {
+            if (!it.value().is_string()) {
+                return "Type must be a string";
+            }
+
+            const std::string& value = it.value();
+            if (!metrace::core::checkType(value)) {
+                return "Invalid type " + value;
+            }
+        }
+        else if (key == "title") {
+            if (!it.value().is_string()) {
+                return "Title must be a string";
+            }
+
+            const std::string& value = it.value();
+            if (value.length() > 200 || value.empty()) {
+                return "Title can't be empty and its length must not exceed 200";
+            }
+        }
+        else if (key == "author") {
+            if (!it.value().is_string()) {
+                return "Author must be a string";
+            }
+        }
+        else if (key == "description") {
+            if (!it.value().is_string()) {
+                return "Description must be a string";
+            }
+        }
+        else if (key == "date") {
+            if (!it.value().is_string()) {
+                return "Date must be a string";
+            }
+        }
+        else if (key == "progress") {
+            if (!it.value().is_number()) {
+                return "Progress must be a number between 0 and 1";
+            }
+            double val = it.value();
+            if (val < 0 || val > 1) {
+                return "Progress must between 0 and 1";
+            }
+        }
+        else if (key == "score") {
+            if (!it.value().is_number_integer()) {
+                return "Score must be a integer between 0 and 100";
+            }
+            int value = it.value();
+            if (value < 0 || value > 100) {
+                return "Score must between 0 and 100";
+            }
+        }
+        else if (key == "comment") {
+            if (!it.value().is_string()) {
+                return "Comment must be a string";
+            }
+        }
+        else if (key == "tags") {
+            if (!it.value().is_array()) return "Tags must be an array of strings";
+            if (it.value().size() > 20) return "Too many tags (max 20)";
+            for (const auto& t : it.value()) {
+                if (!t.is_string()) return "Tags must be an array of strings";
+            }
+        }
+        else {
+            return "Unknown property of item: " + key;
+        }
+    }
+
+    return std::nullopt;
+}
+
 /// @brief 将 JSON 格式解析为 ItemPatch
 /// @param body 
 /// @param patch 
@@ -110,61 +190,20 @@ bool checkItem(const metrace::core::Item& item)
 static std::optional<std::string> parseItemPatch(const nlohmann::json& body, metrace::service::ItemPatch& patch)
 {
     if (!body.is_object()) {
-        return "body must be a JSON object";
+        return "Body must be a JSON object";
     }
+    std::optional<std::string> ckres = checkItemJson(body);
+    if (ckres.has_value()) return ckres;
 
-    for (auto it = body.begin(); it != body.end(); ++it) {
-        const std::string& key = it.key();
-        if (key == "id" || key == "created_at" || key == "updated_at") {
-            return key + " is read-only";
-        }
-        else if (key == "type") {
-            const std::string& value = it.value();
-            if (!metrace::core::checkType(value)) {
-                return "Invalid type " + value;
-            }
-            patch.type = value;
-        }
-        else if (key == "title") {
-            const std::string& value = it.value();
-            if (value.length() > 200) {
-                return "Title length must not exceed 200";
-            }
-            patch.title = value;
-        }
-        else if (key == "author") {
-            patch.author = it.value();
-        }
-        else if (key == "description") {
-            patch.description = it.value();
-        }
-        else if (key == "date") {
-            patch.date = it.value();
-        }
-        else if (key == "progress") {
-            double val = it.value();
-            if (val < 0 || val > 1) {
-                return "Progress must between 0 and 1";
-            }
-            patch.progress = val;
-        }
-        else if (key == "score") {
-            int value = it.value();
-            if (value < 0 || value > 100) {
-                return "Score must between 0 and 100";
-            }
-            patch.score = value;
-        }
-        else if (key == "comment") {
-            patch.comment = it.value();
-        }
-        else if (key == "tags") {
-            patch.tags = it.value();
-        }
-        else {
-            return "Unknown property of item: " + key;
-        }
-    }
+    if (body.contains("type"))          patch.type          = body["type"].get<std::string>();
+    if (body.contains("title"))         patch.title         = body["title"].get<std::string>();
+    if (body.contains("author"))        patch.author        = body["author"].get<std::string>();
+    if (body.contains("description"))   patch.description   = body["description"].get<std::string>();
+    if (body.contains("date"))          patch.date          = body["date"].get<std::string>();
+    if (body.contains("progress"))      patch.progress      = body["progress"].get<double>();
+    if (body.contains("score"))         patch.score         = body["score"].get<int>();
+    if (body.contains("comment"))       patch.comment       = body["comment"].get<std::string>();
+    if (body.contains("tags"))          patch.tags          = body["tags"].get<std::vector<metrace::core::Tag>>();
 
     return std::nullopt;
 }
@@ -193,6 +232,13 @@ static std::optional<metrace::service::TagQuery> parseTagQuery(const httplib::Re
     return q;
 }
 
+static std::string errorBody(const std::string& msg)
+{
+    nlohmann::json j;
+    j["error"] = msg;
+    return j.dump();
+}
+
 constexpr const char* kJsonType = "application/json; charset=utf-8";
 
 } // namespace
@@ -212,7 +258,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         const auto parsed_query = parseItemQuery(req);
         if (!parsed_query.has_value()) {
             res.status = 400;
-            res.set_content(R"({"error":"Invalid query parameters"})", kJsonType);
+            res.set_content(errorBody("Invalid query parameters"), kJsonType);
             return;
         }
 
@@ -231,11 +277,30 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
     // POST /api/items create an item, returns status code 201 and the item
     server.Post("/api/items", [&db](const httplib::Request& req, httplib::Response& res) {
-        metrace::core::Item item = metrace::core::Item::fromCreateJson(req.body);
+        const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
+
+        if (body.is_discarded() || !body.is_object()) {
+            res.status = 400;
+            res.set_content(errorBody("Request body is not a JSON object"), kJsonType);
+            return;
+        }
+        const std::optional<std::string> ckres = checkItemJson(body);
+        if (ckres.has_value()) {
+            res.status = 400;
+            res.set_content(errorBody(ckres.value()), kJsonType);
+            return;
+        }
+        if (!body.contains("type") || !body.contains("title")) {
+            res.status = 400;
+            res.set_content(errorBody("type and title are required"), kJsonType);
+            return;
+        }
+
+        metrace::core::Item item = metrace::core::Item::fromCreateJson(body);
         
         if (!checkItem(item)) {
             res.status = 400;
-            res.set_content(R"({"error": "Invalid item members"})", kJsonType);
+            res.set_content(errorBody("Invalid item members"), kJsonType);
             return;
         }
 
@@ -252,7 +317,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
         if (!item) {
             res.status = 404;
-            res.set_content(R"({"error": "Item not found"})", kJsonType);
+            res.set_content(errorBody("Item not found"), kJsonType);
             return;
         }
 
@@ -267,7 +332,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
         if (!item) {
             res.status = 404;
-            res.set_content(R"({"error": "Item not found"})", kJsonType);
+            res.set_content(errorBody("Item not found"), kJsonType);
             return;
         }
 
@@ -275,7 +340,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         std::optional<std::string> message = parseItemPatch(req.body, patch);
         if (message.has_value()) {
             res.status = 400;
-            res.set_content(message.value(), kJsonType);
+            res.set_content(errorBody(message.value()), kJsonType);
             return;
         }
 
@@ -291,7 +356,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
         if (!item) {
             res.status = 404;
-            res.set_content(R"({"error": "Item not found"})", kJsonType);
+            res.set_content(errorBody("Item not found"), kJsonType);
             return;
         }
 
@@ -306,7 +371,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
         if (!q.has_value()) {
             res.status = 400;
-            res.set_content(R"({"error": "Invalid GET parameters"})", kJsonType);
+            res.set_content(errorBody("Invalid GET parameters"), kJsonType);
             return;
         }
 
@@ -317,7 +382,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         for (const metrace::core::Tag& tag : ans.tags) {
             j["tags"].push_back(tag);
         }
-        
+
         res.set_content(j.dump(), kJsonType);
         return;
     });
