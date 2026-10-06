@@ -36,7 +36,7 @@
 
 ---
 
-## 3. 现状快照（2026-10-01）
+## 3. 现状快照（2026-10-06）
 
 ### 3.1 已完成
 
@@ -44,29 +44,33 @@
 - [x] 全部头文件均有 `#pragma once`（铁律：头文件第一行，新文件当天加）
 - [x] `src/main.cpp`：参数/环境变量解析、`db.load()` fail-fast → `db.save()`；HTTP 启动段随 Router 完成度打开
 - [x] 数据模型定稿（`include/core/Item.h` 为权威，见 §7）：type 为字符串、score 为 int [1-100]、`Tag` 为 `std::string` 别名
-- [x] `LinkedList`：insert（头插）/ remove（按 operator==，即按 id）
-- [x] `Trie`：insert / query / remove；修缮完成（2026-10-02 核对代码：`next[256]`、`unsigned char` 下标、Node 递归析构、Node/Trie 删拷贝）
+- [x] `LinkedList`：头插 `insert`（返回节点内数据 `const T*`）、`remove`（按值 + 按谓词两版）、`forEach`、`find`（const 值版 + const/可变谓词双重载）、`getSize()` O(1) 维护
+- [x] `Trie`：**已接管全局标签表（§7.3）**——insert 返回是否新插 / find / forEach（0..255 字节序 DFS ⇒ 输出即字典序）/ remove（递归清空链）；修缮完成（`next[256]`、`unsigned char`、Node 递归析构、删拷贝）
+- [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删
-- [x] `DataBase::load`：全量加载 items / tags / next_id
-- [x] `http/Router` 骨架起步（`/`、部分 `/api/items`）
+- [x] `DataBase::load`：标签表先行 + 幽灵标签丢弃（§7.3①）+ `next_id = max(文件值, max_id+1)` 兜底；`save`：原子写（tmp+rename）+ Trie `forEach` 收集（天然有序）
+- [x] `queryItem`：Top-N 淘汰堆落地——comp=更差靠堆顶、id 全序兜底、容量 `min(offset+limit, items.getSize())` 钳制、total 分页前统计、两段钳制切片（§9.4 管线全绿）
+- [x] `http/Router`：`/`、`/ping`、GET/POST/PUT/DELETE `/api/items(/{id})`、GET `/api/tags`；parse 助手族（ItemQuery/ItemId/ItemPatch/TagQuery）+ `kJsonType` 常量
+- [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）
 
-### 3.2 待办（按优先级，展开见 §13）
+### 3.2 待办（按优先级，2026-10-06 全量核对后重排）
 
-1. Item 补口子：恢复用户字段 setter、`toJson/fromJson` 覆盖 12 字段、服务端字段（id/时间戳）写入口子（`friend class DataBase`）、`touch()`
-2. LinkedList 补齐：`forEach` / `find` / `clear` / `size`（find/forEach 各配非 const 重载，PUT 改值用）；**删除拷贝**（三法则）
-3. Trie 接管全局标签表（2026-10-02 定，§7.3）：补 `collect`/`size` 口子、`insert` 改返回"是否新插入"；删 `LinkedList<Tag>` 成员；load（全量校验丢弃 §7.3①）/ save / GET /api/tags 改造；写点 `registerTags` 收口（§7.3②）
-4. DataBase 核心：`std::mutex`、`ItemQuery/SortField/ListResult`、CRUD 方法（**listItems 含 Top-N 堆，从 Router.cpp 挪入**）、save 原子写
-5. Router 收口：调用 `db.listItems` 替换本地堆逻辑；include 卫生（§5.3）
-6. HashTable 实现并接入 getItem/updateItem/deleteItem（id → `Item*` 索引）
-7. 撤销/重做（UndoStack）、推荐（Recommender）
-8. 杂项：确认 `.gitignore` 覆盖 `data/`；`test_api.sh` 字段适配
+1. **写路径三处缺口（核对发现，均判为遗漏非设计）**：① `updateItem` 未调 `touch()`（违反"每次 PUT 刷新 updated_at"契约）也未调 `registerTags`（§7.3② 写点收口破洞——PUT 挂新标签名 → 幽灵引用）；② POST 路由把 `req.body`（string）直接传给 `fromCreateJson`（收 json 参数）——被隐式转换成"字符串值 json"，`j["title"]` 必抛 type_error.305；需先 `json::parse(body, nullptr, false)` + `is_discarded()` 再交给工厂；③ `parseItemPatch`/`fromCreateJson` 全体缺 `is_*` 类型谓词——错型值（如 `"score":"abc"`）走 json 隐式转换抛异常 → 500 而非 400；另 PUT 的 title 只查长度不查空串（POST 侧有查）
+2. **`checkType` 含 `"null"` 且被创建/PUT 复用**：null 是查询语义（筛未分类，§8.3/§18），创建与 PUT 白名单应为纯 book/movie/music——拆成两个白名单或参数化
+3. **GET /api/tags 响应键为 `"tags"`，契约为 `"items"`**（§8.2/README 已发布）——改代码（建议）或改契约，二选一拍板
+4. PUT 的 400 错误体是裸文本，应包 `{"error":"..."}`（§8.1）；`set_error_handler`（含 body 保护）/`set_exception_handler` 挂载
+5. DataBase：`mutable std::mutex` + `db_path_` 成员 + 写方法"改内存 + save"锁内完成（§5.2；目前 CRUD 均未落盘，重启即丢）
+6. LinkedList：`clear()`、删拷贝（三法则）
+7. include 卫生与警告：Router.h 瘦身为前向声明（§5.3 目标形态）；LinkedList.h 用 `std::size_t` 未含 `<cstddef>`；`DataBase.cpp:275` 有 `-Wsign-compare`（size_t vs int，违反零警告铁律 §16.8）
+8. HashTable / UndoStack / Recommender（阶段 3，见 §9.5/§9.6）
+9. 杂项：test_api.sh 字段适配；`getCreatedAt()` 返回 `time_t` 与 int64_t 存储不一致（建议统一 int64_t）；`kItemTypeName` 为头文件内 static（每 TU 一份，建议改 `inline`）；Item.cpp 的 `unique` 未限定 `std::`；DELETE 路由可改用 `removeItem` 返回值省一次预查；POST /api/tags 路由未实现
 
 ### 3.3 已定型、不要重新讨论的设计决策
 
 | 决策 | 内容 | 理由速查 |
 |---|---|---|
 | 分层边界 | 过滤/排序/分页等**数据语义**在 DataBase；参数解析/状态码/JSON 形状等**协议语义**在 Router | 锁边界（§5.2）+ 可测试性（§12） |
-| listItems 交接 | 返回 `ListResult{total, vector<const Item*>}`（领域对象），Router 负责序列化 | db 接口不含 json 类型，依赖图干净（§5.3） |
+| listItems 交接 | 返回 `ListResult{total, vector<const Item*>}`（领域对象），Router 负责序列化；实现名 `queryItem`/`ItemQueryResult`，形状与决策一致 | db 接口不含 json 类型，依赖图干净（§5.3） |
 | id 管理 | 服务端 `next_id` 分配器；加载时 `next_id = max(文件值, max_id+1)`；撤销重插用旧 id | 防重发、防手工 JSON 缺字段 |
 | 判等 | `Item::operator==` 按 id；内容哈希摘要方案已否决 | 身份走 id 即够，规模小 |
 | Top-N | 淘汰堆：堆顶=当前最差；比较器必须全序（同值按 id 裁决，score=0 永远最后） | O(n log k)；分页不重不漏的前提 |
@@ -88,26 +92,26 @@ MeTrace-Server/
 │   ├── core/                    # 手写数据结构与数据模型（不 include httplib；除 Item.h 外不 include json）
 │   │   ├── Item.h               # ✓ 条目模型（字段以此文件为权威）
 │   │   ├── Tag.h                # ✓ typedef std::string Tag
-│   │   ├── LinkedList.h         # ◐ insert/remove 已有；待 forEach/find/clear/size/删拷贝
-│   │   ├── Trie.h               # ◐ 三操作已有；待 256/unsigned char/Node 析构/删拷贝
+│   │   ├── LinkedList.h         # ✓ insert/remove(值+谓词)/forEach/find(三重载)/getSize；待 clear/删拷贝
+│   │   ├── Trie.h               # ✓ 标签表本体：insert(bool)/find/forEach(字典序)/remove
 │   │   ├── Heap.h               # ✓ 固定容量堆（Top-N 淘汰语义）
 │   │   ├── HashTable.h          # ○ 空壳：id → Item* 索引（§9.5）
 │   │   ├── UndoStack.h          # ○ 待实现
 │   │   └── Recommender.h        # ○ 待实现
 │   ├── service/
-│   │   └── DataBase.h           # ◐ 成员齐；待 mutex + ItemQuery/ListResult + CRUD
+│   │   └── DataBase.h           # ◐ CRUD+queryItem/queryTag 齐；待 mutex/db_path_/锁内 save
 │   └── http/
 │       └── Router.h             # ◐ registerRoutes 声明（可改前向声明瘦身，§5.3）
 ├── src/                         # 与 include/ 一一对应 + main.cpp
 │   ├── main.cpp                 # ✓ 参数解析 + load/save
-│   ├── core/{Item,Trie}.cpp     # ◐
-│   ├── service/DataBase.cpp     # ◐ load 已有；save/CRUD 待完善
-│   └── http/Router.cpp          # ◐ 堆逻辑待挪回 DataBase（§9.4）
+│   ├── core/{Item,Trie}.cpp     # ✓
+│   ├── service/DataBase.cpp     # ◐ CRUD/query/load/save 已有；待锁与写路径落盘
+│   └── http/Router.cpp          # ◐ 五路由+GET tags 已通；待写路径修复(§3.2)与 handler
 ├── scripts/{build.sh,run.sh}
 ├── tests/
 │   ├── test_api.sh              # ✓ 待按新字段适配（§12）
 │   └── test_<结构>.cpp          # 计划：简单 assert 程序
-└── data/metrace.json            # 运行时生成（确认已 gitignore）
+└── data/metrace.json            # 种子 20 条（已 gitignore）
 ```
 
 图例：✓ 基本完成 / ◐ 部分 / ○ 未开始。铁律：头文件一律放 `include/`，实现一律放 `src/`，文件名与类名一致（大驼峰）；**模板类的实现整体放头文件**（LinkedList/Heap/HashTable 同模式）。
@@ -181,7 +185,9 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - `main` 拿到 false → 打印后 `return 1`。**不许吞错当空库跑**：空库第一次 save 会把可能可修复的数据文件覆盖掉；
 - 可选加固：先整体 `fromJson` 到临时 vector 全部验证，再统一入链表，避免半加载状态。
 
-### 6.3 save（运行期失败不退出）
+> 实现核对（2026-10-06）：以上除"可选加固"外均已落地——标签表先行加载、条目 tags 逐个过表校验（幽灵丢弃 + warn）、`next_id = max(文件值, max_id+1)`。
+
+### 6.3 save（运行期失败不退出；已实现）
 
 1. 拼 json：`next_id` + items + tags（`forEach` 遍历序列化）；
 2. 写**同目录**临时文件 `metrace.json.tmp`：`dump(4)`、`flush()`、**检查流状态**（磁盘满/配额此时才暴露，`operator<<` 不报错）；
@@ -219,7 +225,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - `operator==` 按 **id** 判等（全项目唯一身份判据）；
 - 可编辑字段 9 个：`type/title/author/description/date/progress/score/comment/tags`（PUT 白名单，2026-10-02 修订）；仅 `id`、`created_at`、`updated_at` 服务端自动管理、只读；
 - 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`（写入 `std::time(nullptr)` 的秒级值）；`date` 保持字符串不做时间戳化——它是用户输入的**日历日期**（可能不完整、无时刻语义），与服务器生成的**瞬间**（created_at/updated_at）是两种性质（2026-10-03 定）；
-- 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入），`setTags(std::vector<Tag>)` 按值 + `std::move`。
+- 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入）。`setTags` 现实现为接 `const&` 后内部 **sort + unique**——tags"有序去重"由此成为写入口的构造保证（2026-10-06 落地），load/POST/PUT/undo 全路径自动满足。
 
 ### 7.2 序列化
 
@@ -287,8 +293,8 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 ### 9.1 LinkedList（模板，主存储）
 
-- 已有：头插 insert、remove（prev/cur 双指针，按 `operator==` 即按 id）
-- **待补**：`forEach(const std::function<void(const T&)>&) const`（只读遍历，save/列表/推荐全靠它）；`T* find(const T&)`（返回可变指针，PUT 改值用；键字段 id 只读的纪律由 Item 的访问器保证）；`clear()`（load 重载前清空，析构复用）；`size_t size()`（insert/remove 时 O(1) 维护 count_，供堆容量钳制与 total 校验）
+- 已有（2026-10-06 核对）：头插 `insert`（返回节点内数据 `const T*`，便于 createItem 交回入库后指针）、`remove`（按值 + 按谓词两版，prev/cur 双指针）、`forEach`（const 只读遍历）、`find`（const 值版 / const 谓词版 / **可变谓词版**，PUT 就地改值走第三种）、`getSize()`（insert/remove 时 O(1) 维护 count）
+- **待补**：`clear()`（load 重载前清空，析构复用）；**删拷贝**（三法则）
 - **三法则**：自定义析构已存在，必须 `= delete` 拷贝构造与拷贝赋值
 - 纪律：载荷（data）经 `T*` 开放读写；结构变更只走成员函数；**遍历中禁止 insert/remove**（需要就先收集后处理）；辅助结构（HashTable）持有的指针必须与结构变更**同锁同步**
 
@@ -297,7 +303,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **角色（2026-10-02 定，§7.3）**：Trie 即全局标签表本体——查重 `query` O(L)、有序枚举/收集 `collect`（DFS 按 0..255 字节序访问孩子 ⇒ 输出即 UTF-8 字节字典序，正是 GET /api/tags 与 save 的输出序）、undo 删除 `remove`（removeRec 顺带清空链）；/api/search 若实施默认线性前缀扫描、不依赖 Trie（§18）
 - 修缮已完成（2026-10-02 核对）：`next[256]`（中文 UTF-8 字节 ≥0x80，128 会越界）；下标统一 `unsigned char`（char 有符号，负下标是 UB，警告 `-Wchar-subscripts` 即此问题）；Node 递归析构（递归深度 = 最长键字节数 ≤约 600，栈安全；勿改显式栈——显式栈积压未访问兄弟，内存反而差）；Node/Trie 删拷贝
 - `removeRec` 递归方案：后序递归返回"节点是否变空"，父层负责 delete + 断链 + `--cnt_next`；head 是值成员永不删
-- **待补口子**：`collect(std::vector<std::string>&) const`；O(1) `size()`（words_ 计数，insert/remove 维护）；`insert` 建议改返回 bool（是否新插入，服务同名幂等）
+- 口子现状（2026-10-06）：`insert` 已返回 bool（是否新插，服务同名幂等）✓；collect/size 未单独做——`queryTag` 用 `forEach` 边遍历边计数切片，等效实现且顺序即字典序
 - `operator[]` 的"自动建节点"语义只允许 insert 使用，query/remove 走判空分支（否则删不存在的词会凭空建节点）
 
 ### 9.3 Heap（固定容量堆，已实现）
@@ -391,19 +397,19 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - [x] main.cpp：参数解析 + load fail-fast + 声明顺序（db 先于 server）
 - [ ] 收尾：确认 `.gitignore` 含 `data/`
 
-### 阶段 1：数据层（10.1~10.5，进行中）
+### 阶段 1：数据层（10.1~10.5，基本完成）
 
-- [ ] Item：恢复 setter、toJson/fromJson 全字段、friend DataBase、touch()
-- [ ] LinkedList：forEach / find / clear / size + 删拷贝 + `tests/test_linkedlist.cpp`
-- [ ] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；清零编译警告
-- [ ] DataBase：mutex；save 原子写（§6.3）；next_id 兜底初始化；load 加固（§6.2）
-- [ ] 验收：手工构造 JSON，load → 改内存 → save 回读一致
+- [x] Item：setter、toJson/fromJson 全字段、friend DataBase、touch()、fromCreateJson、int64 时间戳（2026-10-06）
+- [x] LinkedList：forEach / find（双重载）/ 谓词版 remove / getSize；剩 clear + 删拷贝 + `tests/test_linkedlist.cpp`
+- [x] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；并接管全局标签表（§7.3）
+- [x] DataBase：save 原子写；next_id 兜底；load 加固（表先行 + 幽灵丢弃）；**剩 mutex 与锁内 save**
+- [x] 验收：种子 20 条（data/metrace.json）load → query → save 链路走通
 
-### 阶段 2：HTTP CRUD（10.6~10.9）
+### 阶段 2：HTTP CRUD（10.6~10.9，进行中）
 
-- [ ] `ItemQuery/SortField/ListResult` 落入 DataBase.h；实现 listItems（**Top-N 堆从 Router.cpp 挪入**，§9.4）/ getItem / createItem / updateItem / deleteItem / tags 两方法（save 在锁内）
-- [ ] Router：/api/items 五路由 + /api/tags 两路由 + 校验（§8.3）+ error/exception handler
-- [ ] include 卫生：Router.h 前向声明；DataBase.h 去 json；Router.cpp 自带 json
+- [x] `ItemQuery/SortField/ItemQueryResult/TagQuery` 等落入 DataBase.h；`queryItem`（Top-N 堆，§9.4）/ getItem / updateItem / removeItem / createItem / `queryTag` 已实现（save 进锁内未做）
+- [x] Router：/api/items 五路由 + GET /api/tags + 校验；**剩 POST /api/tags、写路径修复（§3.2 第 1 条）、error/exception handler**
+- [ ] include 卫生：Router.cpp 自带 json ✓；**剩 Router.h 前向声明瘦身、DataBase.h 补 `<cstddef>`**
 - [ ] `test_api.sh` 字段适配，全部断言通过
 
 ### 阶段 3：算法功能（10.10~10.14，两人并行）

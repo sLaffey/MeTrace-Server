@@ -421,16 +421,17 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] 移除数据库依赖，CMake 仅保留 httplib + nlohmann_json
 - [x] 全部头文件加 `#pragma once`；main.cpp 参数解析与加载流程定稿
 
-### 阶段 1：数据层（10.1~10.5，进行中）
+### 阶段 1：数据层（基本完成）
 
-- [x] Trie 插入/查询/删除；Heap 固定容量堆
-- [x] DataBase::load 全量加载
-- [ ] Item 序列化全字段与服务端字段口子；LinkedList 补遍历/查找/清空
-- [ ] save 原子落盘、互斥锁
+- [x] Trie 插入/查询/删除（并作为全局标签表）；Heap 固定容量堆
+- [x] DataBase::load（含标签校验）与 save 原子落盘
+- [x] Item 序列化全字段与服务端字段口子（id/时间戳自动管理）；LinkedList 遍历/查找/计数
+- [ ] 互斥锁、写操作锁内落盘（收尾中）
 
-### 阶段 2：HTTP CRUD（10.6~10.9）
+### 阶段 2：HTTP CRUD（进行中）
 
-- [ ] `/api/items`、`/api/tags` 全部路由 + 校验 + 过滤排序分页（Top-N 堆在 DataBase 内）
+- [x] `/api/items` 增删改查五路由 + GET `/api/tags`（Top-N 堆在 DataBase 内）
+- [ ] 写路径修复与 POST `/api/tags`、错误处理器收尾
 - [ ] `tests/test_api.sh` 字段适配，断言全部通过
 
 ### 阶段 3：撤销重做与推荐（10.10~10.14）

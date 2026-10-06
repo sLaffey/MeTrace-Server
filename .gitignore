@@ -1,7 +1,10 @@
 .vscode/
 build/
 
-# SQLite 运行时产生的数据库文件
+# SQLite 遗留（依赖已移除，可清理）
 *.db
 *.db-shm
 *.db-wal
+
+# 运行时数据文件
+data/
