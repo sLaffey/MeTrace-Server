@@ -58,7 +58,7 @@
 - CMake ≥ 3.22.1
 - 支持 C++17 的编译器（GCC ≥ 9 / Clang ≥ 10 / MSVC 2019+）
 - 首次构建需要联网（拉取依赖）
-- 运行测试需要 `curl`
+- 运行测试需要 `curl` 与 `jq`
 
 ### 构建
 
@@ -130,6 +130,14 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 ```
 
 脚本会用 `curl` 跑断言，覆盖增删改查、分页过滤与参数校验，最后打印通过 / 失败数量。
+
+`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（20 条种子数据，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；除接口行为外还覆盖种子加载语义（幽灵标签丢弃、tags 排序去重）与启动行为（文件缺失按空库启动、文件损坏拒绝启动）。
+
+```bash
+./tests/test.sh                                 # 依赖 curl 与 jq
+./tests/test.sh --url http://127.0.0.1:8000     # 只对已运行的服务端测试（跳过种子数据断言）
+./tests/test.sh --server ./build/bin/server --port 18000
+```
 
 ---
 
@@ -386,7 +394,9 @@ MeTrace-Server/
 │   ├── build.sh
 │   └── run.sh
 ├── tests/
-│   └── test_api.sh
+│   ├── test.sh                  # 自包含回归测试（自动起停服务端，curl + jq）
+│   ├── test_api.sh              # 对已运行服务端的冒烟测试
+│   └── metrace.json             # 测试种子数据（20 条，已纳入版本控制）
 ├── data/                        # 运行时生成的 JSON 存储文件（已 gitignore）
 └── build/                       # 构建产物，含 FetchContent 缓存的依赖
 ```
