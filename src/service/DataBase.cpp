@@ -15,7 +15,7 @@ namespace {
 
 bool byCreatedAt(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)
 {
-    return desc ? b.getCreatedAt() > a.getCreatedAt() : a.getCreatedAt() < b.getCreatedAt();
+    return desc ? a.getCreatedAt() > b.getCreatedAt() : a.getCreatedAt() < b.getCreatedAt();
 }
 
 bool byScore(const metrace::core::Item& a, const metrace::core::Item& b, bool desc)

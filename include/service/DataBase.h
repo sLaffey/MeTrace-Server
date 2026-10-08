@@ -56,7 +56,7 @@ struct ItemPatch {
 
 class DataBase {
 private:
-    int next_id = 0;
+    int next_id = 1;
     metrace::core::LinkedList<metrace::core::Item> items;
     metrace::core::Trie tags;
 

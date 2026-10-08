@@ -88,7 +88,7 @@ Item Item::fromCreateJson(const nlohmann::json& j)
     item.author = j.value("author", "");
     item.description = j.value("description", "");
     item.date = j.value("date", "");
-    item.progress = j.value("progress", 0);
+    item.progress = j.value("progress", 0.0);
     item.score = j.value("score", 0);
     item.comment = j.value("comment", "");
     item.tags = j.value("tags", std::vector<Tag>());
