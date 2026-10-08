@@ -4,7 +4,7 @@
 >
 > 《计算机科学与工程程序设计实践》课程设计项目。C/S 架构，服务端纯 C++ 实现，客户端 GUI 通过 HTTP + JSON 通信。
 
-一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐与撤销/重做。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、双栈、推荐算法等均为手写实现）。
+一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、Trie、哈希表、推荐算法等均为手写实现）。撤销/重做由客户端 GUI 本地实现（双栈在客户端），服务端只提供普通 CRUD。
 
 ---
 
@@ -31,7 +31,8 @@
 - 标签系统：打标签时自动创建不存在的标签，条目与标签多对多关联
 - 组合过滤 + 排序 + 分页：按类型、标签筛选，按评分 / 日期 / 创建时间 / 标题排序；排序取 Top-N 采用手写淘汰堆，O(n log k)
 - 完整的参数校验与语义化状态码（400 / 404 / 500）
-- 手写数据结构承担全部业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**双栈**实现撤销/重做、**推荐算法**基于标签重叠/作者/类型相似度
+- 手写数据结构承担全部业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表、**哈希表**作 id 索引、**推荐算法**基于标签重叠/作者/类型相似度
+- 撤销/重做归客户端：服务端不设 `/api/undo`、`/api/redo`，只保证写请求原子并回传完整 after 态，供客户端双栈回放
 - 原子落盘：写操作先写临时文件再 rename，中途崩溃不会损坏数据文件
 - 线程安全：httplib 线程池并发处理请求，数据访问通过单一互斥锁串行化
 
@@ -111,10 +112,6 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
   -H 'Content-Type: application/json' \
   -d '{"progress":1,"score":98}'
 
-# 撤销刚才的修改 / 重做
-curl -X POST http://127.0.0.1:8000/api/undo
-curl -X POST http://127.0.0.1:8000/api/redo
-
 # 和《三体》相似的条目
 curl 'http://127.0.0.1:8000/api/recommend?item_id=1&topN=5'
 
@@ -123,13 +120,6 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 ```
 
 ### 接口测试
-
-```bash
-./scripts/run.sh --db /tmp/metrace-test.json &   # 测试会写数据，建议用临时文件
-./tests/test_api.sh http://127.0.0.1:8000
-```
-
-脚本会用 `curl` 跑断言，覆盖增删改查、分页过滤与参数校验，最后打印通过 / 失败数量。
 
 `tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（20 条种子数据，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；除接口行为外还覆盖种子加载语义（幽灵标签丢弃、tags 排序去重）与启动行为（文件缺失按空库启动、文件损坏拒绝启动）。
 
@@ -202,10 +192,10 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | DELETE | `/api/items/{id}` | 删除条目 | — | `204`（无 body） |
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}` |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{"name":"科幻"}` |
-| POST | `/api/undo` | 撤销上一次写操作 | — | `{"success":true,"action":"..."}` |
-| POST | `/api/redo` | 重做 | — | `{"success":true,"action":"..."}` |
 | GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
 
+> **撤销/重做不在服务端**：双栈由客户端 GUI 实现，服务端不提供对应接口；客户端回放所需的契约（完整 after 态、DELETE 无 body、只读 id）见下文「撤销/重做（客户端实现）」小节。
+>
 > 计划中：`/api/search`（Trie 前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
 
 ### 查询参数
@@ -326,13 +316,15 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
 
 `total` 是**满足过滤条件的总条数**（不受分页影响），用于客户端计算页数；`items` 只包含当前页。
 
-**POST /api/undo / /api/redo**
+**撤销/重做（客户端实现）**
 
-```json
-{ "success": true, "action": "新增《三体》" }
-```
+服务端**不提供** `/api/undo`、`/api/redo`，也不持有任何撤销快照；双栈、容量上限（建议 100 丢最旧）、清空 redo 栈等纪律全部归客户端 GUI。客户端回放依赖以下服务端契约：
 
-撤销/重做由内存双栈实现：只有写操作（增/改/删条目、新增标签）入栈，栈空时返回 400 `nothing to undo`；撤销栈上限 100 条；**服务重启后撤销/重做历史清空**（数据本身不受影响）。
+- `POST /api/items` 返回 `201` + 完整条目，`PUT /api/items/{id}` 返回 `200` + 完整条目 —— 客户端可直接用响应刷新缓存并入栈；
+- `DELETE /api/items/{id}` 返回 `204`（无 body）：要支持"撤销删除"，客户端必须在删除前自持完整条目快照；
+- **撤销删除 = 以新 `id` 重建**：`id`/`created_at`/`updated_at` 是服务端只读字段，POST 不接受客户端指定 id，因此重建得到新 id 与新时间戳，原 id 不复用；
+- 撤销 PUT 时旧值需由客户端自行快照（PUT 是部分更新，只回传 after 态）；
+- 撤销"新增条目" = 发 DELETE，条目引用的标签仍留在全局标签表（孤儿标签是可接受的简化），标签没有删除接口。
 
 **GET /api/recommend?item_id=1&topN=5**
 
@@ -369,9 +361,9 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
     ▼
 HTTP 层 (src/http/Router.cpp)      路由注册 · 参数校验 · 响应序列化
     ▼
-业务层 (service/DataBase)          过滤/排序/分页 · CRUD · 撤销重做 · 推荐 · 加载保存（加锁）
+业务层 (service/DataBase)          过滤/排序/分页 · CRUD · 推荐 · 加载保存（加锁）
     ▼
-数据结构与算法层 (core/)           LinkedList · Heap · Trie · UndoStack · Recommender · Item/Tag
+数据结构与算法层 (core/)           LinkedList · Heap · Trie · HashTable · Recommender · Item/Tag
     ▼
 本地 JSON 文件 (data/metrace.json)
 ```
@@ -386,7 +378,7 @@ MeTrace-Server/
 ├── include/
 │   ├── core/                    # 手写数据结构与数据模型（Item / LinkedList / Trie / Heap / HashTable / …）
 │   ├── service/
-│   │   └── DataBase.h           # 数据库门面：链表 + 标签表 + 加载保存 + CRUD + undo/redo 编排
+│   │   └── DataBase.h           # 数据库门面：链表 + 标签表 + 加载保存 + CRUD
 │   └── http/
 │       └── Router.h
 ├── src/                         # 与 include/ 一一对应的实现 + main.cpp
@@ -395,7 +387,6 @@ MeTrace-Server/
 │   └── run.sh
 ├── tests/
 │   ├── test.sh                  # 自包含回归测试（自动起停服务端，curl + jq）
-│   ├── test_api.sh              # 对已运行服务端的冒烟测试
 │   └── metrace.json             # 测试种子数据（20 条，已纳入版本控制）
 ├── data/                        # 运行时生成的 JSON 存储文件（已 gitignore）
 └── build/                       # 构建产物，含 FetchContent 缓存的依赖
@@ -403,7 +394,7 @@ MeTrace-Server/
 
 ### 线程安全
 
-httplib 默认用线程池并发处理请求，而内存链表不是线程安全的。`DataBase` 持有一把 `std::mutex`，所有公开方法（含撤销/重做与保存）进入即加锁，"改内存 + 落盘"在同一临界区内完成——同一时刻只有一个线程操作数据，对这个量级的个人应用足够。
+httplib 默认用线程池并发处理请求，而内存链表不是线程安全的。`DataBase` 持有一把 `std::mutex`，所有公开方法（含保存）进入即加锁，"改内存 + 落盘"在同一临界区内完成——同一时刻只有一个线程操作数据，对这个量级的个人应用足够。
 
 ---
 
@@ -416,11 +407,12 @@ httplib 默认用线程池并发处理请求，而内存链表不是线程安全
 | 单链表 `LinkedList` | 已实现 | 头插 O(1)，按 id 查找/删除 O(n) | 全部条目的主存储，所有 CRUD 在链表上进行 |
 | 二叉堆 `Heap` | 已实现 | push/pop O(log n)；固定容量，满员自动淘汰最差 | 列表排序与高分榜的 Top-N，O(n log k) |
 | 推荐算法 `Recommender` | 计划 | 遍历打分 O(n·k)，或图共同邻居 O(V+E) | 相似推荐；冷启动高分榜复用堆 |
-| 双栈 `UndoStack` | 计划 | push / undo / redo 均摊 O(1)，容量 100 | 撤销 / 重做，保存操作前后的条目快照 |
 | 前缀树 `Trie` | 已实现 | 插入 / 查询 / 删除 O(L)，有序枚举 | 全局标签表：查重、有序列表、落盘收集；可选接入前缀搜索 |
-| 哈希表 `HashTable` | 计划 | 链地址法，平均 O(1)，负载因子 >0.75 扩容 | id → 条目索引，加速单查/改/删 |
+| 哈希表 `HashTable` | 计划 | 链地址法，平均 O(1)，负载因子 >0.75 扩容 | id → 条目索引，加速单查/改/删（服务端第四个结构） |
 
 Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素只与堆顶比较，整趟扫描 O(n log k)；比较器以 id 做全序兜底，保证分页不重不漏。
+
+服务端手写结构为 **LinkedList / Trie / Heap / HashTable 四个**，另加 **Recommender** 算法（HashTable 与 Recommender 待实施，见上表状态）；**撤销/重做的双栈在客户端 GUI**，不计入服务端结构账。
 
 ---
 
@@ -444,13 +436,15 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] 写路径收口：统一校验（键白名单/类型/值域/tags 上限）、错误体规范、时间戳刷新与标签注册
 - [x] PUT body 解析修复、`limit` 契约截断 1~100（`limit=0` 曾致服务崩溃）、`/` 回 text/plain
 - [ ] POST `/api/tags`、错误处理器挂载与收尾
-- [ ] `tests/test_api.sh` 字段适配，断言全部通过
+- [x] `tests/test.sh` 自包含回归全绿（132 项）；旧 `test_api.sh` 已删除
 
-### 阶段 3：撤销重做与推荐（10.10~10.14）
+### 阶段 3：HashTable 索引与推荐（10.10~10.14）
 
-- [ ] `UndoStack` + `/api/undo`、`/api/redo` + 写操作入栈
+- [ ] `HashTable`（id → `Item*` 索引）接入单查 / 改 / 删
 - [ ] `Recommender` + `/api/recommend`
-- [ ] 可选：Trie 接入 `/api/search`、HashTable 索引接入
+- [ ] 可选：Trie 接入 `/api/search`
+
+> 撤销/重做改由客户端 GUI 实现，服务端不再规划 `UndoStack` 与 `/api/undo`、`/api/redo`（2026-10-08 定）。
 
 ### 阶段 4：完善与验收（10.15~10.18）
 
@@ -484,7 +478,11 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 
 **撤销/重做重启后还在吗？**
 
-不在。撤销栈是进程内存结构，重启即清空；已写入 JSON 文件的数据不受影响。
+撤销/重做由客户端本地实现，历史保存在客户端进程内：客户端重启即清空，服务端重启不影响客户端已持有的历史；已写入 JSON 文件的数据不受影响。
+
+**服务端为什么不提供 `/api/undo`？**
+
+按课设的结构盘点（见 [数据结构与算法](#数据结构与算法)），服务端的手写结构是 LinkedList / Trie / Heap / HashTable 四个（HashTable 待实施）；撤销/重做的双栈放在客户端 GUI 侧，那里有真实调用方。服务端只保证写请求原子、回传完整 after 态，并让 `DELETE` 保持 204 无 body。
 
 **`GET /api/items/abc` 为什么返回 404 而不是 400？**
 
