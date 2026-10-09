@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_set>
 #include <mutex>
+#include <filesystem>
 
 #include <nlohmann/json.hpp>
 
@@ -273,6 +274,10 @@ const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& que
 {
     std::lock_guard<std::mutex> lock(mtx);
 
+    ItemQueryResult query_result;
+    query_result.total = 0;
+    if (items.getSize() == 0) return query_result; // 空库不构造堆，会抛异常
+
     metrace::core::Heap<const metrace::core::Item*> heap(
         std::min<std::size_t>(query.offset + query.limit, items.getSize()),
         [&query](const metrace::core::Item* a, const metrace::core::Item* b) -> bool {
@@ -302,7 +307,6 @@ const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& que
 
     const std::size_t begin = std::min(query.offset, res.size());
     const std::size_t end = std::min(begin + query.limit, res.size());
-    ItemQueryResult query_result;
     query_result.items.assign(res.begin() + begin, res.begin() + end);
     query_result.total = total;
     return query_result;

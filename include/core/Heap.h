@@ -55,6 +55,7 @@ private:
 public:
     explicit Heap(std::size_t capacity, std::function<bool(const T&, const T&)> comp)
         : capacity(capacity), size(0), comp(comp) {
+            if (capacity == 0) throw std::invalid_argument("capacity 必须大于 0");
             data = new T[capacity]{};
         }
     
