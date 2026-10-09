@@ -361,16 +361,13 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
     // DELETE /api/items/{id} 删除条目，返回 204
     server.Delete("/api/items/(\\d+)", [&db](const httplib::Request& req, httplib::Response& res) {
         const std::optional<int> id = parseItemId(req);
-        const metrace::core::Item* item = id.has_value() ? db.getItem(id.value()) : nullptr;
-
-        if (!item) {
+        if (!id.has_value() || !db.removeItem(id.value())) {
             res.status = 404;
             res.set_content(errorBody("Item not found"), kJsonType);
-            return;
         }
-
-        db.removeItem(id.value());
-        res.status = 204;
+        else {
+            res.status = 204;
+        }
         return;
     });
 
