@@ -5,6 +5,7 @@
 #include <string>
 
 #include <nlohmann/json.hpp>
+#include <httplib.h>
 
 #include "core/Item.h"
 #include "http/Router.h"

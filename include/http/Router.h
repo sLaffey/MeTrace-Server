@@ -1,8 +1,8 @@
 #pragma once
 
-#include <httplib.h>
+namespace httplib { class Server; }
 
-#include "service/DataBase.h"
+namespace metrace::service { class DataBase; }
 
 namespace metrace::http {
 
