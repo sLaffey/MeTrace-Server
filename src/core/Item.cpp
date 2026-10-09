@@ -134,7 +134,7 @@ void Item::touch()
 void Item::uniqueTags()
 {
     std::sort(tags.begin(), tags.end());
-    tags.erase(unique(tags.begin(), tags.end()), tags.end());
+    tags.erase(std::unique(tags.begin(), tags.end()), tags.end());
 }
 
 std::optional<std::string> validateItem(const Item& item)

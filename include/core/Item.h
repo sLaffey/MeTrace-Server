@@ -13,7 +13,7 @@ namespace metrace::service { class DataBase; }
 
 namespace metrace::core {
 
-static const std::string kItemTypeName[4] = {
+inline const std::string kItemTypeName[4] = {
     "uncategorized", "book", "movie", "music"
 };
 
