@@ -6,6 +6,10 @@
 
 namespace metrace::core {
 
+inline const std::string kItemTypeName[4] = {
+    "uncategorized", "book", "movie", "music"
+};
+
 bool checkType(const std::string& type)
 {
     for (const std::string& t : kItemTypeName) {

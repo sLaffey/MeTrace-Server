@@ -13,10 +13,6 @@ namespace metrace::service { class DataBase; }
 
 namespace metrace::core {
 
-inline const std::string kItemTypeName[4] = {
-    "uncategorized", "book", "movie", "music"
-};
-
 bool checkType(const std::string& type);
 bool checkTitle(const std::string& title);
 bool checkProgress(double progress);
