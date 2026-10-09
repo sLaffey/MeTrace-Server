@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
@@ -81,8 +82,28 @@ bool DataBase::load(const std::string& dbPath)
             tags.insert(itemJson);
         }
 
+        std::unordered_set<int> seen;
+        seen.reserve(data["items"].size());
         for (const auto &itemJson : data["items"]) {
             metrace::core::Item item = metrace::core::Item::fromJson(itemJson);
+
+            try {
+                item = metrace::core::Item::fromJson(itemJson);
+            }
+            catch (const nlohmann::json::exception& e) {
+                std::cerr << "[DataBase] Fatal: malformed item: " << e.what() << std::endl;
+                return false;
+            }
+            if (const auto why = metrace::core::validateItem(item)) {
+                std::cerr << "[DataBase] Fatal: item " << item.id << " invalid " << why.value() << std::endl;
+                return false;
+            }
+            if (item.id <= 0 || item.created_at <= 0 || item.updated_at < item.created_at) {
+                std::cerr << "[DataBase] Fatal: item " << item.id << " has invalid id/timestamps" << std::endl;
+                return false;
+            }
+
+            // 标签过滤放在校验之后
             std::vector<metrace::core::Tag> kept_tags;
             for (const auto& tag : item.getTags()) {
                 if (!tags.find(tag)) {
@@ -91,6 +112,12 @@ bool DataBase::load(const std::string& dbPath)
                 }
                 else kept_tags.push_back(tag);
             }
+
+            if (!seen.insert(item.getId()).second) {
+                std::cerr << "[DataBase] Fatal: duplicate item id " << item.getId() << std::endl;
+                return false;
+            }
+
             item.setTags(kept_tags);
             items.insert(item);
             max_id = std::max(max_id, item.getId());

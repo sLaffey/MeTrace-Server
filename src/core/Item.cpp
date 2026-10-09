@@ -16,6 +16,35 @@ bool checkType(const std::string& type)
     return false;
 }
 
+bool checkTitle(const std::string& title)
+{
+    return !title.empty() && title.length() <= 200;
+}
+
+bool checkProgress(double progress)
+{
+    return progress >= 0 && progress <= 1;
+}
+
+bool checkScore(int score)
+{
+    return score >= 0 && score <= 100;
+}
+
+bool checkTag(const Tag& tag)
+{
+    return !tag.empty() && tag.length() <= 50;
+}
+
+bool checkTags(const std::vector<Tag>& tags)
+{
+    if (tags.size() > 20) return false;
+    for (const auto& tag : tags) {
+        if (!checkTag(tag)) return false;
+    }
+    return true;
+}
+
 bool Item::hasTag(const Tag& tag) const
 {
     for (const Tag& t : tags) {
@@ -106,6 +135,16 @@ void Item::uniqueTags()
 {
     std::sort(tags.begin(), tags.end());
     tags.erase(unique(tags.begin(), tags.end()), tags.end());
+}
+
+std::optional<std::string> validateItem(const Item& item)
+{
+    if (!checkType(item.getType())) return "type must be uncategorized/book/movie/music, got \"" + item.getType() + "\"";
+    if (!checkTitle(item.getTitle())) return "title must be non-empty and <= 200 bytes, got \"" + item.getTitle() + "\"";
+    if (!checkProgress(item.getProgress())) return "progress must be within [0, 1]";
+    if (!checkScore(item.getScore())) return "score must be within [0, 100]";
+    if (!checkTags(item.getTags())) return "tags must be <=20 non-empty names of <=50 bytes each";
+    return std::nullopt;
 }
 
 } // namespace metrace::core

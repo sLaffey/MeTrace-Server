@@ -131,8 +131,7 @@ static std::optional<std::string> checkItemJson(const nlohmann::json& j)
                 return "Title must be a string";
             }
 
-            const std::string& value = it.value();
-            if (value.length() > 200 || value.empty()) {
+            if (!metrace::core::checkTitle(it.value())) {
                 return "Title can't be empty and its length must not exceed 200";
             }
         }
@@ -155,8 +154,7 @@ static std::optional<std::string> checkItemJson(const nlohmann::json& j)
             if (!it.value().is_number()) {
                 return "Progress must be a number between 0 and 1";
             }
-            double val = it.value();
-            if (val < 0 || val > 1) {
+            if (!metrace::core::checkProgress(it.value())) {
                 return "Progress must between 0 and 1";
             }
         }
@@ -164,8 +162,7 @@ static std::optional<std::string> checkItemJson(const nlohmann::json& j)
             if (!it.value().is_number_integer()) {
                 return "Score must be a integer between 0 and 100";
             }
-            int value = it.value();
-            if (value < 0 || value > 100) {
+            if (!metrace::core::checkScore(it.value())) {
                 return "Score must between 0 and 100";
             }
         }
@@ -179,6 +176,9 @@ static std::optional<std::string> checkItemJson(const nlohmann::json& j)
             if (it.value().size() > 20) return "Too many tags (max 20)";
             for (const auto& t : it.value()) {
                 if (!t.is_string()) return "Tags must be an array of strings";
+            }
+            if (!metrace::core::checkTags(it.value().get<std::vector<metrace::core::Tag>>())) {
+                return "Tag must be non-empty and <=50 bytes";
             }
         }
         else {

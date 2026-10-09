@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <optional>
 
 #include "core/Tag.h"
 
@@ -13,10 +14,15 @@ namespace metrace::service { class DataBase; }
 namespace metrace::core {
 
 static const std::string kItemTypeName[4] = {
-    "null", "book", "movie", "music"
+    "uncategorized", "book", "movie", "music"
 };
 
 bool checkType(const std::string& type);
+bool checkTitle(const std::string& title);
+bool checkProgress(double progress);
+bool checkScore(int score);
+bool checkTag(const Tag& tag);
+bool checkTags(const std::vector<Tag>& tags);
 
 /// @brief 条目类，表示一个条目对象
 /// @details 包含条目的基本信息，如标题、作者、简介、发布日期、观看进度、评分、评论、标签等
@@ -80,5 +86,7 @@ public:
     static Item fromJson(const nlohmann::json&);
     static Item fromCreateJson(const nlohmann::json&);
 };
+
+std::optional<std::string> validateItem(const Item& item);
 
 } // namespace metrace::core

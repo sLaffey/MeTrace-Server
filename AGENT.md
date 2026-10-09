@@ -46,7 +46,7 @@
 - [x] 数据模型定稿（`include/core/Item.h` 为权威，见 §7）：type 为字符串、score 为 int [1-100]、`Tag` 为 `std::string` 别名
 - [x] `LinkedList`：头插 `insert`（返回节点内数据 `const T*`）、`remove`（按值 + 按谓词两版）、`forEach`、`find`（const 值版 + const/可变谓词双重载）、`getSize()` O(1) 维护
 - [x] `Trie`：**已接管全局标签表（§7.3）**——insert 返回是否新插 / find / forEach（0..255 字节序 DFS ⇒ 输出即字典序）/ remove（递归清空链）；修缮完成（`next[256]`、`unsigned char`、Node 递归析构、删拷贝）
-- [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化
+- [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化；未分类取值由 `"null"` 改名为 `"uncategorized"`（2026-10-08，白名单即 `kItemTypeName[4]`）
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删
 - [x] `DataBase::load`：标签表先行 + 幽灵标签丢弃（§7.3①）+ `next_id = max(文件值, max_id+1)` 兜底；`save`：原子写（tmp+rename）+ Trie `forEach` 收集（天然有序）
 - [x] `queryItem`：Top-N 淘汰堆落地——comp=更差靠堆顶、id 全序兜底、容量 `min(offset+limit, items.getSize())` 钳制、total 分页前统计、两段钳制切片（§9.4 管线全绿）
@@ -57,7 +57,7 @@
 
 ### 3.2 待办（按优先级，2026-10-08 核对）
 
-1. **`checkType` 含 `"null"` 且被创建/PUT 复用**：已定方向——`null` 语义 = "未分类"，分类名计划改为 `"uncategorized"`（联动 `kItemTypeName[0]`、种子数据、§7.1/§8.3 修订与创建/PUT 白名单拆分，见 §18），待实施；未实施前 POST/PUT 仍可写入 `type="null"`
+1. **load 值域校验未实现**：策略已定（2026-10-08）——load 对结构错 / 值域越界 / id 不合法一律 **fail-fast、不做迁移**，校验规则与写入口共用同一份 core 谓词，见 §6.2 与 §16.9；覆盖 `type` 白名单、title 非空且 ≤200、score 0~100、progress 0~1、tags ≤20 个且单个非空 ≤50 字符、id 正数且唯一、`next_id` 自洽。顺带：**写入口目前也没有校验单个 tag 的长度与空串**（README 承诺 ≤50 字符），补齐时两个边界一起加，否则一次成功的 POST 会造出下次启动拒绝加载的文件。`null` → `uncategorized` 改名已随 `kItemTypeName[0]` 落地（2026-10-08）
 2. DataBase：`mutable std::mutex` + `db_path_` 成员 + 写方法"改内存 + save"锁内完成（§5.2；**CRUD 目前均未落盘，重启即丢**）
 3. LinkedList：`clear()`（拷贝构造与拷贝赋值均已删除，三法则已齐）
 4. Router 收尾：POST /api/tags 路由未实现；`set_error_handler`（含 body 保护 `if (!res.body.empty()) return;`）与 `set_exception_handler` 挂载
@@ -84,6 +84,7 @@
 | GET /api/tags 响应键 | `{"total":N,"tags":[...]}`——响应键与资源名一致 | 2026-10-06 拍板：以代码为准，契约回改（§8.2/README 同步） |
 | 模板 vs 具体 | LinkedList/Heap 模板；HashTable `template<typename V>` 键固定 int；Trie/Item 具体 | 各取所需（§9） |
 | 撤销/重做归属 | 双栈与 undo/redo 由客户端 GUI 实现；服务端只提供普通 CRUD，不设 `/api/undo`、`/api/redo`、不持有撤销快照 | 客户端双栈有真实调用方；服务端结构账见 §9.6（2026-10-08 定） |
+| type 白名单 | 四个合法取值 `uncategorized`/`book`/`movie`/`music`；`uncategorized` 是真实分类，可被客户端显式创建（POST/PUT），POST 的 `type` 必填、不设缺省；load 遇未知 type 一律 fail-fast、不做旧名迁移 | 未分类不是占位值；写入口与 load 共用同一份规则（§16.9，2026-10-08 定） |
 
 ---
 
@@ -185,12 +186,14 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 - 文件不存在 → 空库正常返回；存在但打不开 → 真错误；
 - 解析/字段错误：内部 `catch (const nlohmann::json::exception&)` + 兜底 `catch (const std::exception&)`，打日志（含 `e.what()`，parse_error 自带出错位置）返回 false；
+- **值域校验（2026-10-08 定，待实现）**：逐条过与写入口同一份 core 谓词——`type` 白名单（`uncategorized`/`book`/`movie`/`music`）、title 非空且 ≤200、score 0~100、progress 0~1、tags ≤20 个且每个非空 ≤50 字符、id > 0 且全局唯一、`next_id` 自洽；任一条违约 → 记 `[DataBase] Fatal: item <id> field ...` 并返回 false（拒绝启动）。**不 clamp、不丢弃整条、不做旧值迁移**——含 `type:"null"` 的旧库直接拒绝启动，需手工改成 `uncategorized`；
+- **规则一处定义、两处执行**：load 拒绝的取值，Router 写路径必须同样拒绝（共用 core 谓词），否则一次成功的 POST 就能造出下次启动加载失败的文件；
 - `next_id = max(data.value("next_id", 0), 已加载条目 max_id + 1)`；
 - 重载前先 `clear()` 旧内容（LinkedList 需补此方法）；
 - `main` 拿到 false → 打印后 `return 1`。**不许吞错当空库跑**：空库第一次 save 会把可能可修复的数据文件覆盖掉；
 - 可选加固：先整体 `fromJson` 到临时 vector 全部验证，再统一入链表，避免半加载状态。
 
-> 实现核对（2026-10-06）：以上除"可选加固"外均已落地——标签表先行加载、条目 tags 逐个过表校验（幽灵丢弃 + warn）、`next_id = max(文件值, max_id+1)`。
+> 实现核对（2026-10-08）：标签表先行加载、条目 tags 逐个过表校验（幽灵丢弃 + warn）、`next_id = max(文件值, max_id+1)` 均已落地；**值域校验（上一条）尚未实现**，见 §3.2-1。
 
 ### 6.3 save（运行期失败不退出；已实现）
 
@@ -213,7 +216,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | 字段 | C++ | JSON | 约定 |
 |---|---|---|---|
 | `id` | `int` | number | 服务端分配，只读，删除后不复用 |
-| `type` | `std::string` | string | `book`/`movie`/`music`；`kItemTypeName[4]` 映射表含 `"null"` 占位（仅内部默认值，JSON 中不出现） |
+| `type` | `std::string` | string | `uncategorized`（未分类）/`book`/`movie`/`music`，白名单即 `kItemTypeName[4]`；`uncategorized` 是合法可写值（2026-10-08 由 `"null"` 改名），POST/PUT 均可显式传入；`Item::type` 的成员默认是空串、只存在于构造过程中，**任何写入口都要求显式合法值**（POST 的 `type` 必填、不设缺省） |
 | `title` | `string` | string | 必填 ≤200 字符 |
 | `author` | `string` | string | 空串=未知 |
 | `description` | `string` | string | 空串=无 |
@@ -230,7 +233,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - `operator==` 按 **id** 判等（全项目唯一身份判据）；
 - 可编辑字段 9 个：`type/title/author/description/date/progress/score/comment/tags`（PUT 白名单，2026-10-02 修订）；仅 `id`、`created_at`、`updated_at` 服务端自动管理、只读；
 - 服务端字段写入口子：`friend class DataBase`（或等价工厂）；更新刷新 `updated_at` 封装成 `touch()`（写入 `std::time(nullptr)` 的秒级值）；`date` 保持字符串不做时间戳化——它是用户输入的**日历日期**（可能不完整、无时刻语义），与服务器生成的**瞬间**（created_at/updated_at）是两种性质（2026-10-03 定）；
-- 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（校验归 Router，setter 只做无脑写入）。`setTags` 现实现为接 `const&` 后内部 **sort + unique**——tags"有序去重"由此成为写入口的构造保证（2026-10-06 落地），load/POST/PUT 全路径自动满足。
+- 访问器风格：getter 标量按值、string/vector 按 `const&`、全部 `[[nodiscard]]` + 尾部 const；setter 一律 `void`（setter 不做校验，规则见 §16.9）。`setTags` 现实现为接 `const&` 后内部 **sort + unique**——tags"有序去重"由此成为写入口的构造保证（2026-10-06 落地），load/POST/PUT 全路径自动满足。
 
 ### 7.2 序列化
 
@@ -271,13 +274,13 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 > 撤销/重做的双栈由客户端实现，**服务端不提供对应接口**（客户端回放契约见 §8.4，2026-10-08 定）。
 
-请求体校验（2026-10-02 定）：`POST /api/tags` 的 `name` 必填、非空、string、≤50 字符；条目 `tags` ≤20 个——违约一律 **400，不截断**（长度/个数超限按格式错处理，不适用 §8.3 的"数值越界宽容"）。POST/PUT 中出现的 `type`、`title` 按 POST 同规校验（type 过 §8.3 白名单、title 非空 ≤200），违约 400。
+请求体校验（2026-10-02 定）：`POST /api/tags` 的 `name` 必填、非空、string、≤50 字符；条目 `tags` ≤20 个——违约一律 **400，不截断**（长度/个数超限按格式错处理，不适用 §8.3 的"数值越界宽容"）。POST/PUT 中出现的 `type`、`title` 按 POST 同规校验（type 过 §8.3 白名单、title 非空 ≤200），违约 400。`type` 白名单为 `uncategorized`/`book`/`movie`/`music`，`uncategorized` 可显式传入（2026-10-08 定）；POST 的 `type` 仍**必填**，不设缺省值。
 
 ### 8.3 参数细则（GET /api/items 为范式，其余列表接口同构）
 
 | 参数 | 规则 |
 |---|---|
-| `type` | 白名单 null/book/movie/music，非法 → 400（`null` = 未分类，完整语义见 §18） |
+| `type` | 白名单 `uncategorized`/book/movie/music，非法 → 400（`uncategorized` = 未分类，2026-10-08 由 `null` 改名）；条目可显式创建为未分类 |
 | `tag` | 任意字符串，按名精确匹配，缺省不过滤 |
 | `sort` | `[-]created_at/score/date/title`，默认 `-created_at`；`-` 前缀=倒序；非法 → 400 |
 | `limit` | 非数字 → 400；越界 → **静默截断**到 1~100（枚举非法报错、数值越界宽容，是刻意的不对称） |
@@ -422,7 +425,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 ### 阶段 2：HTTP CRUD（10.6~10.9，进行中）
 
 - [x] `ItemQuery/SortField/ItemQueryResult/TagQuery` 等落入 DataBase.h；`queryItem`（Top-N 堆，§9.4）/ getItem / updateItem / removeItem / createItem / `queryTag` 已实现（save 进锁内未做）
-- [x] Router：/api/items 五路由 + GET /api/tags + 校验；写路径修复完成（POST/PUT 非抛解析、limit 契约截断、错误体统一，2026-10-06）；**剩 POST /api/tags、type 白名单拆分（§3.2-1）、error/exception handler**
+- [x] Router：/api/items 五路由 + GET /api/tags + 校验；写路径修复完成（POST/PUT 非抛解析、limit 契约截断、错误体统一，2026-10-06）；`type` 白名单已定为 `uncategorized`/`book`/`movie`/`music`（2026-10-08，不做创建/PUT 拆分）；**剩 POST /api/tags、error/exception handler**
 - [ ] include 卫生：Router.cpp 自带 json ✓；**剩 Router.h 前向声明瘦身、DataBase.h 补 `<cstddef>`**
 - [x] `tests/test.sh` 自包含回归全绿（132 项，2026-10-08）；旧 `test_api.sh` 已删除
 
@@ -470,6 +473,7 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 6. 写操作落盘必须原子写（tmp + rename），这是硬性要求
 7. 文档先于代码：改接口先改本文档 §8；字段以 §7 为准
 8. 保持零警告（`-Wall -Wextra -Wpedantic` 一直开着，新警告一冒头就修）
+9. **校验规则一处定义（core）、两处执行（Router 写入口、`load` 文件入口）**：load 拒绝的取值写路径必须同样拒绝，否则一次成功的 POST 会造出下次启动加载失败的文件；load 一律 fail-fast——不 clamp、不整条丢弃、不做旧值迁移（2026-10-08 定，§6.2）
 
 ---
 
@@ -485,7 +489,7 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 
 > 本节记录 AI 辅助开发过程中确认的事实、已否决的方案与待讨论的开放问题，主要供 AI 接手时对齐上下文。条目拍板后，结论应回写进对应正文章节并从此处移除。
 
-- **【已定方向，待实施】`type` 未分类语义与改名 `uncategorized`**（2026-10-06）：`null` 的语义已定为"未分类"，分类名将改为 `"uncategorized"`（联动 `kItemTypeName[0]`、§7.1 占位说明、§8.3 查询值、种子数据）；实施时一并定两件事——未分类条目的产生途径（创建时 `type` 可否缺省/可否显式传该值）与创建/PUT 白名单拆分。当前 POST/PUT 可写入 `type="null"` 属已知未修状态（§3.2-1）。
+- ~~**【已定方向，待实施】`type` 未分类语义与改名 `uncategorized`**（2026-10-06）~~（2026-10-08 已实施并拍板：`kItemTypeName[0]` 改为 `uncategorized`，可被显式创建、POST 必填、load 未知值 fail-fast 不迁移；结论已回写 §3.1/§3.3/§6.2/§7.1/§8.2/§8.3/§16.9）
 - **【已记录方向】标签 id 化（长期）**：标签若引入 id 与编辑功能，条目改存 `vector<int>`、表存 id→name，改名退化为表内 O(1) 更新，名字镜像问题整体消失——"身份独立于可变属性"（§17 判据）的正面应用；届时 §7.3 同步细则整体重写。
 - **【已记录倾向】/api/search 实现方案**：默认线性前缀过滤（复用 listItems 管道，规模账同 §15"为什么不用索引"的答案）；给 Trie 加 payload（词节点挂 id 列表）成本高（标题可重复、条目删除需维护），收益要大数据量才兑现。实施前再确认一次。
 - **【已否决】item.tags 指针共享**：见 §17 标签改名条目末尾，勿再议。
@@ -518,10 +522,10 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 
 ### 19.3 设计判据（可直接复用的决策法则）
 
-15. **分层一句话判据**："如果这个服务不再是 HTTP 服务，这段代码还活着吗？"——值域校验/键白名单/状态码死 → Router；过滤排序/CRUD/锁 → DataBase；结构与模型 → core。**校验跟着契约走，规范化跟着数据走，盖章跟着分配器走**。
+15. **分层一句话判据**："如果这个服务不再是 HTTP 服务，这段代码还活着吗？"——值域校验/键白名单/状态码死 → Router；过滤排序/CRUD/锁 → DataBase；结构与模型 → core。**校验跟着契约走，规范化跟着数据走，盖章跟着分配器走**。有文件输入源之后补一条：规则的判据改成"**换个输入源还成立吗**"——成立（合法 Item 的值域）→ core，只对 HTTP 成立（键白名单/状态码/错误体）→ Router（§16.9）。
 16. **失败通道**：成功带数据 + 一类失败 → optional/指针；无载荷 + 一类 → bool；多种需区分 → 带数据的结果类型。"从序列化形式构造"用命名工厂/自由函数，不用构造函数（要报失败、不能把 json 拖进头文件、§5.1 判别式）。
-17. **拒绝 / 规范化 / 截断三分**：body 值域违约 → 400 不截断（截断=静默改写用户意图，客户端与服务端永久分叉）；契约声明的规范化（tags 去重排序）→ 数据写入口（构造保证）；读路径协议参数（limit/offset）→ 宽容截断。
-18. **同步不变量靠构造不靠检查**：写点收口（registerTags）、盖章（next_id 无条件覆盖）、load 边界校验（幽灵丢弃、表为权威）；**读路径永不校验、永不变异**（读时丢弃会破坏只读契约、与客户端 undo 快照振荡、制造读导致的落盘分叉）。
+17. **拒绝 / 规范化 / 截断三分**：body 值域违约 → 400 不截断（截断=静默改写用户意图，客户端与服务端永久分叉）；契约声明的规范化（tags 去重排序）→ 数据写入口（构造保证）；读路径协议参数（limit/offset）→ 宽容截断。文件同理：load 遇值域违约 → 拒绝启动（不 clamp、不丢整条、不迁移，§6.2）。
+18. **同步不变量靠构造不靠检查**：写点收口（registerTags）、盖章（next_id 无条件覆盖）、load 边界校验（幽灵丢弃、表为权威）；**读路径永不校验、永不变异**（读时丢弃会破坏只读契约、与客户端 undo 快照振荡、制造读导致的落盘分叉）。校验规则的判别同理：**规则一处定义（core）、两处执行（写入口 400 / load fail-fast）**；两处漂移的代价是"能写进去却读不出来"（§16.9）。
 19. **undo 在客户端（2026-10-08 起）**：服务端不再持有撤销栈；客户端回放走普通 POST/PUT/DELETE，标签仍经 `registerTags` 收口，**因此不可能产生幽灵标签引用**。客户端自身的栈纪律（LIFO、全量入栈、只丢最旧、幂等无状态变化的写不入栈）由客户端文档规定。
 20. **淘汰堆方向**：Heap 的 comp 语义 = "更靠堆顶"（小根堆）；要堆顶=最差，必须传 `better(*b, *a)`（反向）。**同值按 id 兜底成全序是分页不重不漏的硬前提**；弹出序=最差在前，reverse 得 best→worst；弹出循环本身就是堆排序（答辩讲点），勿用 toVector+std::sort 替代（堆数组是层序非排序序）。
 21. **存在性住类型不住值**：缺席用 optional / nullptr / optional 成员表达；只有域内天然有洞（空串不在值域）才可用哨兵；**给对象加 exists 标志 = 僵尸对象**（双真相、检查义务摊派给每个方法）。
