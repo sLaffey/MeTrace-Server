@@ -393,6 +393,20 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         res.set_content(j.dump(), kJsonType);
         return;
     });
+
+    server.set_exception_handler([](const httplib::Request& req, httplib::Response& res, std::exception_ptr ep) {
+        std::string what = "unknown";
+        try { std::rethrow_exception(ep); }
+        catch (const std::exception& e) { what = e.what(); }
+        std::cerr << "[http] Unhandled exception: " << what << std::endl;
+        res.status = 500;
+        res.set_content(errorBody("Internal server error"), kJsonType);
+    });
+
+    server.set_error_handler([](const httplib::Request& req, httplib::Response& res) {
+        if (!res.body.empty()) return;
+        res.set_content(res.status == 404 ? errorBody("Not found") : errorBody("Request failed"), kJsonType);
+    });
 }
 
 } // namespace metrace::http
