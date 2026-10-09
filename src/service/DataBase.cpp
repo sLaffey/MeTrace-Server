@@ -85,7 +85,7 @@ bool DataBase::load(const std::string& dbPath)
         std::unordered_set<int> seen;
         seen.reserve(data["items"].size());
         for (const auto &itemJson : data["items"]) {
-            metrace::core::Item item = metrace::core::Item::fromJson(itemJson);
+            metrace::core::Item item;
 
             try {
                 item = metrace::core::Item::fromJson(itemJson);

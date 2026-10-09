@@ -23,7 +23,7 @@ bool checkTitle(const std::string& title)
 
 bool checkProgress(double progress)
 {
-    return progress >= 0 && progress <= 1;
+    return std::isfinite(progress) && progress >= 0 && progress <= 1;
 }
 
 bool checkScore(int score)
