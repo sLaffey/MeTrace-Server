@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <vector>
 #include <unordered_set>
+#include <mutex>
 
 #include <nlohmann/json.hpp>
 
@@ -184,6 +185,7 @@ bool DataBase::save(const std::string& dbPath) const
 /// @return 一个指向条目的指针，若不存在返回 nullptr
 const metrace::core::Item* DataBase::getItem(int id) const
 {
+    std::lock_guard<std::mutex> lock(mtx);
     const metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
     return item;
 }
@@ -194,6 +196,7 @@ const metrace::core::Item* DataBase::getItem(int id) const
 /// @return 更新后的条目指针，不存在则为 nullptr
 const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const metrace::service::ItemPatch& patch)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
     if (item == nullptr) {
         return nullptr;
@@ -219,6 +222,7 @@ const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const 
 /// @return 是否成功删除
 bool metrace::service::DataBase::removeItem(int id)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     return items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
 }
 
@@ -227,6 +231,7 @@ bool metrace::service::DataBase::removeItem(int id)
 /// @return 指向新条目的指针
 const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     item.id = next_id++;
     item.touch();
     item.created_at = item.updated_at;
@@ -240,11 +245,13 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
 /// @return 若已经存在则返回 false
 bool DataBase::createTag(const metrace::core::Tag& tag)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     return tags.insert(tag);
 }
 
 void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     for (const auto& tag : _tags) {
         tags.insert(tag);
     }
@@ -257,6 +264,7 @@ void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
 /// @return 若标签已被删除或不存在返回 false
 bool DataBase::removeTag(const metrace::core::Tag& tag)
 {
+    std::lock_guard<std::mutex> lock(mtx);
     return tags.remove(tag);
 }
 
@@ -265,6 +273,8 @@ bool DataBase::removeTag(const metrace::core::Tag& tag)
 /// @return QueryResult 包含符合条件的 item 总数（用于计算总页数），以及本页的 items 列表
 const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& query) const
 {
+    std::lock_guard<std::mutex> lock(mtx);
+
     metrace::core::Heap<const metrace::core::Item*> heap(
         std::min<std::size_t>(query.offset + query.limit, items.getSize()),
         [&query](const metrace::core::Item* a, const metrace::core::Item* b) -> bool {
@@ -302,6 +312,8 @@ const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& que
 
 const TagQueryResult DataBase::queryTag(const TagQuery& query) const
 {
+    std::lock_guard<std::mutex> lock(mtx);
+
     TagQueryResult res;
     res.total = 0;
     res.tags.reserve(query.limit);

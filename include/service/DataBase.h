@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <mutex>
 
 #include "core/LinkedList.h"
 #include "core/Item.h"
@@ -59,6 +60,8 @@ private:
     int next_id = 1;
     metrace::core::LinkedList<metrace::core::Item> items;
     metrace::core::Trie tags;
+
+    mutable std::mutex mtx;
 
     void registerTags(const std::vector<metrace::core::Tag>& tags);
     bool removeTag(const metrace::core::Tag& tag);
