@@ -56,10 +56,10 @@
 - [x] load 值域校验落地（2026-10-09）：core 谓词 `checkTitle/checkProgress/checkScore/checkTag/checkTags` + `validateItem`；`load` 逐条校验（值域 + id 唯一性 + 时间戳）后 fail-fast，Router 写路径复用同一份谓词（§6.2/§16.9）
 - [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）；测试副本 `tests/metrace.json`（21 条，含 1 条 `uncategorized`）已纳入版本控制，回归脚本 `tests/test.sh` 自包含起停临时服务端（2026-10-08，2026-10-09 扩到 190 项）
 
-### 3.2 待办（按优先级，2026-10-08 核对）
+### 3.2 待办（按优先级，2026-10-09 核对）
 
-1. **`load` 收尾（小项，2026-10-09）**：`DataBase::load` 里 `fromJson` 在 `try` 之外重复调用了一次——try 外那行先抛，畸形条目走的是外层 catch 的通用信息，内层 `malformed item` 分支不可达，且每条被解析两遍；删掉 try 外那行即可。另一条口径待定：文件里 `next_id` 偏小时按 `max(文件值, max_id+1)` 静默规范化（代码现状），与"load 一律 fail-fast"的字面表述不同——建议保留规范化并补一条 warn（幂等、防 id 复用），若要统一为 fail-fast 则改 §6.2。**P0 仍是第 2 条（锁 + 写路径落盘）。**
-2. DataBase：`mutable std::mutex` + `db_path_` 成员 + 写方法"改内存 + save"锁内完成（§5.2；**CRUD 目前均未落盘，重启即丢**）
+1. **`load` 收尾（小项，2026-10-09）**：`DataBase::load` 里 `fromJson` 在 `try` 之外重复调用了一次——try 外那行先抛，畸形条目走的是外层 catch 的通用信息，内层 `malformed item` 分支不可达，且每条被解析两遍；删掉 try 外那行即可。另一条口径待定：文件里 `next_id` 偏小时按 `max(文件值, max_id+1)` 静默规范化（代码现状），与"load 一律 fail-fast"的字面表述不同——建议保留规范化并补一条 warn（幂等、防 id 复用），若要统一为 fail-fast 则改 §6.2。**P0 是第 2 条（registerTags 死锁 + 写路径落盘）。**
+2. **P0：DataBase 写路径收尾**——`mutex` 已加（2026-10-09，commit 2884ba9），但私有 helper `registerTags` 又加了一次锁、且被持锁的 `createItem`/`updateItem` 调用，导致 **POST/PUT 死锁**（修法见 §5.2 的锁粒度规则）；修掉后补 `db_path_` 成员 + 写方法"改内存 + save"锁内完成（**CRUD 目前均未落盘，重启即丢**）
 3. LinkedList：`clear()`（拷贝构造与拷贝赋值均已删除，三法则已齐）
 4. Router 收尾：POST /api/tags 路由未实现；`set_error_handler`（含 body 保护 `if (!res.body.empty()) return;`）与 `set_exception_handler` 挂载
 5. include 卫生与警告：Router.h 瘦身为前向声明（§5.3）；LinkedList.h 补 `<cstddef>`；`-Wsign-compare`（DataBase.cpp:277，违反 §16.8）；Router.cpp 显式补 `<limits>`（numeric_limits）/`<utility>`（move）/`<optional>`/`<string>`（目前靠 nlohmann/httplib 传递）；DataBase.cpp 直接用 `std::filesystem` 应补 `<filesystem>`（目前靠 `<fstream>` 传递）
@@ -105,13 +105,13 @@ MeTrace-Server/
 │   │   ├── HashTable.h          # ○ 空壳：id → Item* 索引（§9.5，服务端第四个核心结构）
 │   │   └── Recommender.h        # ○ 待实现
 │   ├── service/
-│   │   └── DataBase.h           # ◐ CRUD+queryItem/queryTag 齐；待 mutex/db_path_/锁内 save
+│   │   └── DataBase.h           # ◐ CRUD+queryItem/queryTag 齐；mutex 已加；待 db_path_/锁内 save
 │   └── http/
 │       └── Router.h             # ◐ registerRoutes 声明（可改前向声明瘦身，§5.3）
 ├── src/                         # 与 include/ 一一对应 + main.cpp
 │   ├── main.cpp                 # ✓ 参数解析 + load/save
 │   ├── core/{Item,Trie}.cpp     # ✓
-│   ├── service/DataBase.cpp     # ◐ CRUD/query/load/save 已有；待锁与写路径落盘
+│   ├── service/DataBase.cpp     # ◐ CRUD/query/load/save 已有；锁已加（待修 registerTags 二次加锁）；待写路径落盘
 │   └── http/Router.cpp          # ◐ 五路由+GET tags+校验已通；待 POST /api/tags 与 error/exception handler
 ├── scripts/{build.sh,run.sh}
 ├── tests/
@@ -152,6 +152,10 @@ MeTrace-Server/
 ### 5.2 锁边界 = 分层边界（本架构最重要的不变量）
 
 httplib 用线程池并发处理请求，而链表/堆/哈希表都不是线程安全的。**`DataBase` 持一把 `std::mutex`，所有公有方法进入即 `lock_guard`；写方法内"改内存 + save()"整个在锁内执行**。由此推出：任何对数据结构的遍历/修改都必须发生在某个加锁的 db 方法内部——这就是"查询逻辑必须在 listItems 里而不是 Router 里"的物理原因。Router 永远不直接接触任何数据结构。
+
+**锁粒度规则（2026-10-09 实弹）**：锁只出现在**公有方法入口**，私有 helper（`registerTags`/`removeTag`）**一律不加锁**——它们只在已持锁的公有方法内被调用，二次加锁 = 同线程死锁（`std::mutex` 非递归，POST/PUT 会永久挂起）。
+
+**返回值语义（待评估）**：db 返回的是指向链表节点内部的指针（`const Item*` / `vector<const Item*>`），解锁后另一线程若 DELETE 同一条目，Router 再序列化即 use-after-free。当前按"单客户端、窗口极小"接受；根治方案是 db 返回拷贝，或提供"持锁回调"让 Router 在锁内序列化。
 
 ### 5.3 依赖与 include 卫生
 
@@ -420,7 +424,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - [x] Item：setter、toJson/fromJson 全字段、friend DataBase、touch()、fromCreateJson、int64 时间戳（2026-10-06）
 - [x] LinkedList：forEach / find（三重载）/ 谓词版 remove / getSize；拷贝构造与赋值均已删；剩 clear + `tests/test_linkedlist.cpp`
 - [x] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；并接管全局标签表（§7.3）
-- [x] DataBase：save 原子写；next_id 兜底；load 加固（表先行 + 幽灵丢弃 + 值域/id/时间戳 fail-fast，2026-10-09）；**剩 mutex 与锁内 save**
+- [x] DataBase：save 原子写；next_id 兜底；load 加固（表先行 + 幽灵丢弃 + 值域/id/时间戳 fail-fast，2026-10-09）；`mutex` 已加（2026-10-09）；**剩 `registerTags` 死锁修复与写路径落盘**
 - [x] 验收：种子 20 条（data/metrace.json）load → query → save 链路走通
 
 ### 阶段 2：HTTP CRUD（10.6~10.9，进行中）

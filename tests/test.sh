@@ -21,7 +21,8 @@
 #
 # 依赖：bash、curl、jq。
 # 说明：自启模式下所有写操作都落在临时目录里的数据库副本上，
-#       不会改动 tests/metrace.json、data/ 或任何已有服务端。
+#       不会改动 tests/metrace.json、data/ 或任何已有服务端；
+#       所有请求都带 3s 超时（curl -m），服务端若死锁/失去响应会记为失败，而不是挂住整个脚本。
 
 set -uo pipefail
 
@@ -101,7 +102,7 @@ checkjqc() { check "$1" "$2" "$(jqc "$3" "$4")"; }
 # 发一次请求，把响应体与状态码分别放进 RESP_BODY / RESP_STATUS。
 request() {
     local out
-    out="$(curl -s -w $'\n%{http_code}' "$@")"
+    out="$(curl -s -m 3 -w $'\n%{http_code}' "$@")"
     RESP_STATUS="${out##*$'\n'}"
     RESP_BODY="${out%$'\n'*}"
 }
@@ -112,14 +113,14 @@ api_put()    { request -X PUT "$BASE/api/items/$1" -H "$CT" -d "$2"; }
 api_delete() { request -X DELETE "$BASE/api/items/$1"; }
 
 # 只需要状态码时用这几个，避免污染 RESP_*。
-status_of()     { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+status_of()     { curl -s -m 3 -o /dev/null -w '%{http_code}' "$@"; }
 status_get()    { status_of "$BASE$1"; }
 status_post()   { status_of -X POST "$BASE/api/items" -H "$CT" -d "$1"; }
 status_put()    { status_of -X PUT "$BASE/api/items/$1" -H "$CT" -d "$2"; }
 status_delete() { status_of -X DELETE "$BASE/api/items/$1"; }
 
 content_type() { # <path>
-    curl -s -D - -o /dev/null "$BASE$1" | tr -d '\r' \
+    curl -s -m 3 -D - -o /dev/null "$BASE$1" | tr -d '\r' \
         | awk -F': ' 'tolower($1) == "content-type" { print $2; exit }'
 }
 
@@ -144,7 +145,7 @@ start_server() { # <db> <port> <log>，成功返回 0
     SERVER_PID=$!
     SRV_PIDS+=("$SERVER_PID")
     for i in $(seq 1 50); do
-        if curl -sf "http://127.0.0.1:$port/ping" >/dev/null 2>&1; then
+        if curl -sf -m 1 "http://127.0.0.1:$port/ping" >/dev/null 2>&1; then
             return 0
         fi
         if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -532,10 +533,10 @@ echo "== 启动与加载行为 =="
 EMPTY_PORT="$(free_port 18200 18300)"
 EMPTY_BASE="http://127.0.0.1:$EMPTY_PORT"
 if start_server "$WORK/empty.json" "$EMPTY_PORT" "$WORK/empty.log"; then
-    EMPTY_ITEMS="$(curl -s "$EMPTY_BASE/api/items")"
+    EMPTY_ITEMS="$(curl -s -m 3 "$EMPTY_BASE/api/items")"
     check '数据库文件不存在时按空库启动' true \
         "$(jqv '(.total == 0) and (.items | length == 0)' "$EMPTY_ITEMS")"
-    EMPTY_POST="$(curl -s -X POST "$EMPTY_BASE/api/items" -H "$CT" -d '{"type":"book","title":"空库首条"}')"
+    EMPTY_POST="$(curl -s -m 3 -X POST "$EMPTY_BASE/api/items" -H "$CT" -d '{"type":"book","title":"空库首条"}')"
     checkjq '空库首个条目 id=1' 1 '.id' "$EMPTY_POST"
     kill "$SERVER_PID" 2>/dev/null
 else
@@ -588,7 +589,7 @@ make_db_file "$WORK/ok_uncategorized.json" '.type = "uncategorized"'
 OK_PORT="$(free_port 19600 19700)"
 OK_BASE="http://127.0.0.1:$OK_PORT"
 if start_server "$WORK/ok_uncategorized.json" "$OK_PORT" "$WORK/ok_uncategorized.log"; then
-    OK_ITEMS="$(curl -s "$OK_BASE/api/items")"
+    OK_ITEMS="$(curl -s -m 3 "$OK_BASE/api/items")"
     checkjq '合法 uncategorized 库可加载' 1 '.total' "$OK_ITEMS"
     checkjq '加载后 type 保持 uncategorized' 'uncategorized' '.items[0].type' "$OK_ITEMS"
     kill "$SERVER_PID" 2>/dev/null
@@ -603,7 +604,7 @@ OK2_PORT="$(free_port 19700 19800)"
 OK2_BASE="http://127.0.0.1:$OK2_PORT"
 if start_server "$WORK/ok_boundary.json" "$OK2_PORT" "$WORK/ok_boundary.log"; then
     checkjq '合法边界值（200 字节 title / 20 个 tag / score 100 / progress 1）可加载' 1 \
-        '.total' "$(curl -s "$OK2_BASE/api/items")"
+        '.total' "$(curl -s -m 3 "$OK2_BASE/api/items")"
     kill "$SERVER_PID" 2>/dev/null
 else
     check '合法边界值（200 字节 title / 20 个 tag / score 100 / progress 1）可加载' true false

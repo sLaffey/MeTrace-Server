@@ -251,7 +251,6 @@ bool DataBase::createTag(const metrace::core::Tag& tag)
 
 void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
 {
-    std::lock_guard<std::mutex> lock(mtx);
     for (const auto& tag : _tags) {
         tags.insert(tag);
     }
@@ -264,7 +263,6 @@ void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
 /// @return 若标签已被删除或不存在返回 false
 bool DataBase::removeTag(const metrace::core::Tag& tag)
 {
-    std::lock_guard<std::mutex> lock(mtx);
     return tags.remove(tag);
 }
 
