@@ -4,6 +4,7 @@
 #include <string>
 #include <optional>
 #include <mutex>
+#include <cstddef>
 
 #include "core/LinkedList.h"
 #include "core/Item.h"
@@ -60,6 +61,8 @@ private:
     int next_id = 1;
     metrace::core::LinkedList<metrace::core::Item> items;
     metrace::core::Trie tags;
+
+    std::string db_path;
 
     mutable std::mutex mtx;
 

@@ -66,6 +66,7 @@ DataBase::DataBase(const std::string& dbPath)
 /// @return true if success, false if failed
 bool DataBase::load(const std::string& dbPath)
 {
+    db_path = dbPath;
     // json 文件约定: { "items": [...], "tags": [...], "next_id": <int> }
     using json = nlohmann::json;
     std::ifstream file(dbPath);
@@ -215,6 +216,8 @@ const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const 
     item->touch();
     registerTags(item->getTags());
 
+    save(db_path);
+
     return item;
 }
 
@@ -224,7 +227,9 @@ const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const 
 bool metrace::service::DataBase::removeItem(int id)
 {
     std::lock_guard<std::mutex> lock(mtx);
-    return items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
+    bool ans = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
+    save(db_path);
+    return ans;
 }
 
 /// @brief 插入新条目，自动去重和注册 tag、分配 id、创建和更新时间
@@ -238,7 +243,10 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
     item.created_at = item.updated_at;
     item.uniqueTags();
     registerTags(item.tags);
-    return items.insert(item);
+    const metrace::core::Item* res = items.insert(item);
+
+    save(db_path);
+    return res;
 }
 
 /// @brief 插入新标签
@@ -247,7 +255,10 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
 bool DataBase::createTag(const metrace::core::Tag& tag)
 {
     std::lock_guard<std::mutex> lock(mtx);
-    return tags.insert(tag);
+    bool res = tags.insert(tag);
+    
+    save(db_path);
+    return res;
 }
 
 void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)
