@@ -122,7 +122,13 @@ bool DataBase::load(const std::string& dbPath)
             items.insert(item);
             max_id = std::max(max_id, item.getId());
         }
-        next_id = std::max(data.value("next_id", 0), max_id + 1);
+        int data_id = data.value("next_id", 0);
+        if (data_id < max_id + 1) {
+            std::cerr << "[DataBase] Warning: \"next_id\" in database file is less or equal to some actual item id"
+                << ", reallocated next_id." << std::endl;
+            next_id = max_id + 1;
+        }
+        else next_id = data_id;
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[DataBase] Fatal: Can't load database file in " << dbPath << " with exception " << e.what() << std::endl;
         return false;
