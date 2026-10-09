@@ -1,5 +1,5 @@
 {
-    "next_id": 21,
+    "next_id": 22,
     "items": [
         {
             "id": 1,
@@ -351,6 +351,22 @@
             ],
             "created_at": 1790965800,
             "updated_at": 1790965800
+        },
+        {
+            "id": 21,
+            "type": "uncategorized",
+            "title": "尚未分类的收藏",
+            "author": "",
+            "description": "导入后还没归类",
+            "date": "2017-05-05",
+            "progress": 0.25,
+            "score": 0,
+            "comment": "",
+            "tags": [
+                "小说"
+            ],
+            "created_at": 1790920000,
+            "updated_at": 1790920000
         }
     ],
     "tags": [

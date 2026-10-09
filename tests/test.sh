@@ -10,7 +10,8 @@
 #   GET/PUT/DELETE /api/items/{id}
 #   GET  /api/tags            标签表有序枚举
 # 同时覆盖 DataBase::load 的种子加载语义（幽灵标签丢弃、tags 排序去重）与
-# 启动行为（文件不存在按空库启动、文件损坏 fail-fast 拒绝启动）。
+# 启动行为（文件不存在按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动、不改写文件），
+# 以及 type 白名单（含 uncategorized）在查询 / 创建 / 更新 / 加载四个入口的一致性。
 #
 # 用法：
 #   ./tests/test.sh                     # 用 tests/metrace.json 起一个临时服务端跑全部断言（推荐）
@@ -154,6 +155,41 @@ start_server() { # <db> <port> <log>，成功返回 0
     return 1
 }
 
+# 以一条合法条目为底，用 jq 补丁改字段后写成单条目数据库（供加载校验用例使用）。
+DB_ITEM_BASE='{"id":1,"type":"book","title":"基准条目","author":"","description":"","date":"","progress":0,"score":0,"comment":"","tags":[],"created_at":1000,"updated_at":1000}'
+
+make_db_file() { # <path> <jq-patch>
+    local item
+    item="$(printf '%s' "$DB_ITEM_BASE" | jq -c "$2")"
+    jq -cn --argjson item "$item" '{next_id:($item.id + 1), tags:[], items:[$item]}' >"$1"
+}
+
+# 期望服务端因加载校验失败拒绝启动：非零退出 + 日志含 Fatal + 数据文件未被改写。
+expect_load_failure() { # <描述> <db-path>
+    local desc="$1" db="$2" port log pid rc i before after
+    before="$(cat "$db")"
+    port="$(free_port 19400 19500)"
+    log="$WORK/loadfail.$RANDOM.log"
+    "$SERVER_BIN" --host 127.0.0.1 --port "$port" --db "$db" >"$log" 2>&1 &
+    pid=$!
+    SRV_PIDS+=("$pid")
+    for i in $(seq 1 60); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.05
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        check "$desc" '拒绝启动' '仍在运行（未触发 fail-fast）'
+        kill "$pid" 2>/dev/null
+        return
+    fi
+    wait "$pid" 2>/dev/null
+    rc=$?
+    check "$desc（非零退出）" true "$([[ "$rc" -ne 0 ]] && echo true || echo false)"
+    check "$desc（日志含 Fatal）" true "$(grep -qi 'fatal' "$log" && echo true || echo false)"
+    after="$(cat "$db")"
+    check "$desc（未改写数据文件）" "$before" "$after"
+}
+
 cleanup() {
     local pid
     for pid in "${SRV_PIDS[@]:-}"; do
@@ -228,8 +264,8 @@ echo "== 种子数据加载 (tests/metrace.json) =="
 api_get '/api/items?limit=100'
 SEED_ALL="$RESP_BODY"
 check 'GET /api/items 返回 200' 200 "$RESP_STATUS"
-checkjq '种子条目总数 20' 20 '.total' "$SEED_ALL"
-checkjq '本页条目数 20' 20 '.items | length' "$SEED_ALL"
+checkjq '种子条目总数 21' 21 '.total' "$SEED_ALL"
+checkjq '本页条目数 21' 21 '.items | length' "$SEED_ALL"
 
 api_get '/api/items/1'
 check 'GET /api/items/1 返回 200' 200 "$RESP_STATUS"
@@ -265,6 +301,14 @@ api_get '/api/items?tag=不存在的标签'
 checkjq '不存在的标签返回空集' 0 '.total' "$RESP_BODY"
 checkjqc '不存在的标签 items 为空数组' '[]' '.items' "$RESP_BODY"
 
+# 未分类条目（type = uncategorized）：改名后的新取值必须能正常加载与过滤
+api_get '/api/items?type=uncategorized&limit=100'
+check 'type=uncategorized 查询返回 200' 200 "$RESP_STATUS"
+checkjq 'type=uncategorized 总数 1' 1 '.total' "$RESP_BODY"
+checkjqc '未分类条目的 id 与 type' '{"id":21,"type":"uncategorized"}' '.items[0] | {id, type}' "$RESP_BODY"
+api_get '/api/items?type=uncategorized&tag=小说'
+checkjq '未分类条目可被标签交叉过滤' 1 '.total' "$RESP_BODY"
+
 # ---------------------------------------------------------------------------
 echo
 echo "== 排序与分页 =="
@@ -281,7 +325,8 @@ checkjqc 'sort=-score 高分在前' '[2,1,12]' '[.items[].id]' "$RESP_BODY"
 api_get '/api/items?sort=score&limit=3'
 checkjqc 'sort=score 低分在前' '[19,9,18]' '[.items[].id]' "$RESP_BODY"
 api_get '/api/items?sort=score&limit=100'
-checkjqc '未评分(score=0)无论方向都排最后' '[10,14,20]' '[.items[].id][-3:]' "$RESP_BODY"
+checkjqc '未评分(score=0)无论方向都排最后' '[10,14,20,21]' '[.items[] | select(.score == 0) | .id]' "$RESP_BODY"
+check '未评分条目确实位于结果末尾' true "$(jqv '(.items[-4:] | all(.score == 0))' "$RESP_BODY")"
 
 api_get '/api/items?sort=title&limit=1'
 checkjq 'sort=title 按 UTF-8 字节序升序' 'Fly Me to the Moon' '.items[0].title' "$RESP_BODY"
@@ -300,9 +345,9 @@ api_get '/api/items?sort=-score&limit=100'
 FULL_IDS="$(jqc '[.items[].id]' "$RESP_BODY")"
 PAGED_IDS='[]'
 OFFSET=0
-while [[ "$OFFSET" -lt 20 ]]; do
+while [[ "$OFFSET" -lt 21 ]]; do
     api_get "/api/items?sort=-score&limit=7&offset=$OFFSET"
-    checkjq "分页 offset=$OFFSET 时 total 不受分页影响" 20 '.total' "$RESP_BODY"
+    checkjq "分页 offset=$OFFSET 时 total 不受分页影响" 21 '.total' "$RESP_BODY"
     check "分页 offset=$OFFSET 每页不超过 limit" true \
         "$(jqv '(.items | length) <= 7' "$RESP_BODY")"
     PAGED_IDS="$(printf '%s' "$RESP_BODY" | jq -c --argjson prev "$PAGED_IDS" '$prev + [.items[].id]')"
@@ -311,14 +356,14 @@ done
 check '分页逐页拼接与全量一致（id 全序兜底）' "$FULL_IDS" "$PAGED_IDS"
 
 api_get '/api/items?limit=0'
-check 'limit=0 静默截断为 1' true "$(jqv '(.items | length) == 1 and .total == 20' "$RESP_BODY")"
+check 'limit=0 静默截断为 1' true "$(jqv '(.items | length) == 1 and .total == 21' "$RESP_BODY")"
 api_get '/api/items?limit=101'
-check 'limit 超过 100 静默截断' true "$(jqv '(.items | length) == 20 and .total == 20' "$RESP_BODY")"
+check 'limit 超过 100 静默截断' true "$(jqv '(.items | length) == 21 and .total == 21' "$RESP_BODY")"
 api_get '/api/items?offset=1000'
-check 'offset 超出总数返回空页但 total 不变' true "$(jqv '(.items | length) == 0 and .total == 20' "$RESP_BODY")"
+check 'offset 超出总数返回空页但 total 不变' true "$(jqv '(.items | length) == 0 and .total == 21' "$RESP_BODY")"
 
 echo "== 查询参数校验 =="
-for q in 'type=game' 'sort=unknown' 'limit=abc' 'offset=-1' 'offset=abc'; do
+for q in 'type=game' 'type=null' 'sort=unknown' 'limit=abc' 'offset=-1' 'offset=abc'; do
     check "GET /api/items?$q 返回 400" 400 "$(status_get "/api/items?$q")"
 done
 check '空参数视同未提供（200）' 200 "$(status_get '/api/items?type=')"
@@ -356,7 +401,7 @@ check 'POST /api/items 返回 201' 201 "$RESP_STATUS"
 CREATE_RESP="$RESP_BODY"
 NEW_ID="$(jqv '.id' "$CREATE_RESP")"
 if [[ "$SEED_MODE" -eq 1 ]]; then
-    checkjq '服务端分配 id（种子 next_id=21）' 21 '.id' "$CREATE_RESP"
+    checkjq '服务端分配 id（种子 next_id=22）' 22 '.id' "$CREATE_RESP"
 fi
 checkjq 'created_at 与 updated_at 一致' true '.created_at == .updated_at and .created_at > 0' "$CREATE_RESP"
 checkjqc '重复标签去重且有序' '["新标签","科幻"]' '.tags' "$CREATE_RESP"
@@ -369,6 +414,10 @@ check '回读内容与创建响应一致' "$CREATE_RESP" "$RESP_BODY"
 api_post '{"type":"music","title":"默认值条目"}'
 checkjq '缺省字段用默认值' true \
     '.author == "" and .description == "" and .date == "" and .comment == "" and .score == 0 and .progress == 0 and .tags == []' "$RESP_BODY"
+
+api_post '{"type":"uncategorized","title":"未分类新增条目"}'
+check 'POST type=uncategorized 返回 201' 201 "$RESP_STATUS"
+checkjq 'POST 的 uncategorized 原样回传' 'uncategorized' '.type' "$RESP_BODY"
 
 # PUT 是部分更新：只改传入字段
 sleep 1
@@ -386,6 +435,8 @@ api_put "$NEW_ID" '{"tags":["科幻"]}'
 checkjqc 'PUT tags 整体替换' '["科幻"]' '.tags' "$RESP_BODY"
 api_put "$NEW_ID" '{"type":"movie"}'
 checkjq 'PUT 可改 type' 'movie' '.type' "$RESP_BODY"
+api_put "$NEW_ID" '{"type":"uncategorized"}'
+checkjq 'PUT 可改为 uncategorized' 'uncategorized' '.type' "$RESP_BODY"
 api_put "$NEW_ID" '{}'
 check 'PUT 空对象合法（不发变更）' 200 "$RESP_STATUS"
 checkjq 'PUT 空对象不改字段' 98 '.score' "$RESP_BODY"
@@ -427,10 +478,13 @@ TAGS21="$(jq -cn '[range(0;21) | "tag\(.)"] | {type:"book", title:"超量标签"
 TAGS20="$(jq -cn '[range(0;20) | "tag\(.)"] | {type:"book", title:"满量标签", tags:.}')"
 LONG200="$(printf 'a%.0s' $(seq 1 200))"
 LONG201="$(printf 'a%.0s' $(seq 1 201))"
+TAG50="$(printf 'a%.0s' $(seq 1 50))"
+TAG51="$(printf 'a%.0s' $(seq 1 51))"
 
 check 'POST 缺 title 返回 400' 400 "$(status_post '{"type":"book"}')"
 check 'POST 缺 type 返回 400' 400 "$(status_post '{"title":"x"}')"
 check 'POST 非法 type 返回 400' 400 "$(status_post '{"type":"game","title":"x"}')"
+check 'POST type=null（旧枚举名）返回 400' 400 "$(status_post '{"type":"null","title":"x"}')"
 check 'POST 未知字段返回 400' 400 "$(status_post '{"type":"book","title":"x","foo":1}')"
 check 'POST 只读字段 id 返回 400' 400 "$(status_post '{"type":"book","title":"x","id":1}')"
 check 'POST 只读字段 created_at 返回 400' 400 "$(status_post '{"type":"book","title":"x","created_at":1}')"
@@ -445,6 +499,9 @@ check 'POST progress 为负返回 400' 400 "$(status_post '{"type":"book","title
 check 'POST tags 超过 20 个返回 400' 400 "$(status_post "$TAGS21")"
 check 'POST tags 恰好 20 个合法' 201 "$(status_post "$TAGS20")"
 check 'POST tags 元素非字符串返回 400' 400 "$(status_post '{"type":"book","title":"x","tags":[1]}')"
+check 'POST tags 含空串返回 400' 400 "$(status_post '{"type":"book","title":"x","tags":[""]}')"
+check 'POST tag 超过 50 字节返回 400' 400 "$(status_post "{\"type\":\"book\",\"title\":\"x\",\"tags\":[\"$TAG51\"]}")"
+check 'POST tag 恰好 50 字节合法' 201 "$(status_post "{\"type\":\"book\",\"title\":\"x\",\"tags\":[\"$TAG50\"]}")"
 check 'POST tags 非数组返回 400' 400 "$(status_post '{"type":"book","title":"x","tags":"科幻"}')"
 check 'POST 空 body 返回 400' 400 "$(status_post '')"
 check 'POST body 非 JSON 返回 400' 400 "$(status_post 'not json')"
@@ -456,6 +513,9 @@ check 'PUT type 非法返回 400' 400 "$(status_put "$VAL_ID" '{"type":"game"}')
 check 'PUT title 空串返回 400' 400 "$(status_put "$VAL_ID" '{"title":""}')"
 check 'PUT score 为 null 返回 400' 400 "$(status_put "$VAL_ID" '{"score":null}')"
 check 'PUT progress 越界返回 400' 400 "$(status_put "$VAL_ID" '{"progress":2}')"
+check 'PUT type=null（旧枚举名）返回 400' 400 "$(status_put "$VAL_ID" '{"type":"null"}')"
+check 'PUT tags 含空串返回 400' 400 "$(status_put "$VAL_ID" '{"tags":[""]}')"
+check 'PUT tag 超过 50 字节返回 400' 400 "$(status_put "$VAL_ID" "{\"tags\":[\"$TAG51\"]}")"
 check 'PUT body 非 JSON 返回 400' 400 "$(status_put "$VAL_ID" 'oops')"
 check 'PUT 不存在的 id 返回 404' 404 "$(status_put 999999 '{"score":1}')"
 check 'DELETE 不存在的 id 返回 404' 404 "$(status_delete 999999)"
@@ -483,26 +543,72 @@ else
     cat "$WORK/empty.log" >&2
 fi
 
-# 文件损坏：fail-fast 拒绝启动，且不覆盖原文件
-BAD_DB="$WORK/corrupt.json"
-printf '{ this is not valid json\n' >"$BAD_DB"
-BAD_BEFORE="$(cat "$BAD_DB")"
-BAD_PORT="$(free_port 18400 18500)"
-"$SERVER_BIN" --host 127.0.0.1 --port "$BAD_PORT" --db "$BAD_DB" >"$WORK/corrupt.log" 2>&1 &
-BAD_PID=$!
-SRV_PIDS+=("$BAD_PID")
-sleep 1
-if kill -0 "$BAD_PID" 2>/dev/null; then
-    check '损坏的数据库文件拒绝启动' true false
-    kill "$BAD_PID" 2>/dev/null
+# ---------------------------------------------------------------------------
+# 加载校验失败矩阵：值域 / 旧枚举名 / id 与时间戳，一律 fail-fast、不做迁移（AGENT §6.2/§16.9）
+# ---------------------------------------------------------------------------
+make_db_file "$WORK/bad_type_legacy.json" '.type = "null"'
+expect_load_failure '加载拒绝 type="null"（旧枚举名，不迁移）' "$WORK/bad_type_legacy.json"
+make_db_file "$WORK/bad_type_unknown.json" '.type = "game"'
+expect_load_failure '加载拒绝未知 type' "$WORK/bad_type_unknown.json"
+make_db_file "$WORK/bad_title_empty.json" '.title = ""'
+expect_load_failure '加载拒绝空 title' "$WORK/bad_title_empty.json"
+make_db_file "$WORK/bad_title_long.json" '.title = ("a" * 201)'
+expect_load_failure '加载拒绝 201 字节 title' "$WORK/bad_title_long.json"
+make_db_file "$WORK/bad_score.json" '.score = 101'
+expect_load_failure '加载拒绝越界 score' "$WORK/bad_score.json"
+make_db_file "$WORK/bad_progress.json" '.progress = 1.5'
+expect_load_failure '加载拒绝越界 progress' "$WORK/bad_progress.json"
+make_db_file "$WORK/bad_tag_empty.json" '.tags = [""]'
+expect_load_failure '加载拒绝空 tag' "$WORK/bad_tag_empty.json"
+make_db_file "$WORK/bad_tag_long.json" '.tags = ["a" * 51]'
+expect_load_failure '加载拒绝 51 字节 tag' "$WORK/bad_tag_long.json"
+make_db_file "$WORK/bad_tags_count.json" '.tags = [range(0;21) | "t\(.)"]'
+expect_load_failure '加载拒绝 21 个 tags' "$WORK/bad_tags_count.json"
+make_db_file "$WORK/bad_id_zero.json" '.id = 0'
+expect_load_failure '加载拒绝 id=0' "$WORK/bad_id_zero.json"
+make_db_file "$WORK/bad_timestamp.json" '.created_at = 2000'
+expect_load_failure '加载拒绝 created_at > updated_at' "$WORK/bad_timestamp.json"
+
+# 重复 id：单条目造不出来，手写两条同 id 记录
+DUP_A="$(printf '%s' "$DB_ITEM_BASE" | jq -c '.')"
+DUP_B="$(printf '%s' "$DB_ITEM_BASE" | jq -c '.title = "第二条"')"
+jq -cn --argjson a "$DUP_A" --argjson b "$DUP_B" '{next_id:3, tags:[], items:[$a,$b]}' >"$WORK/bad_dup_id.json"
+expect_load_failure '加载拒绝重复 id' "$WORK/bad_dup_id.json"
+
+# 结构错误（缺字段）与 JSON 损坏同样 fail-fast
+printf '{"next_id":2,"tags":[],"items":[{"id":1,"type":"book"}]}\n' >"$WORK/bad_missing_field.json"
+expect_load_failure '加载拒绝缺字段条目' "$WORK/bad_missing_field.json"
+printf '{ this is not valid json\n' >"$WORK/corrupt.json"
+expect_load_failure '加载拒绝损坏的 JSON' "$WORK/corrupt.json"
+
+# ---------------------------------------------------------------------------
+# 正对照：uncategorized 与合法边界值必须能正常加载（防止校验过严）
+# ---------------------------------------------------------------------------
+make_db_file "$WORK/ok_uncategorized.json" '.type = "uncategorized"'
+OK_PORT="$(free_port 19600 19700)"
+OK_BASE="http://127.0.0.1:$OK_PORT"
+if start_server "$WORK/ok_uncategorized.json" "$OK_PORT" "$WORK/ok_uncategorized.log"; then
+    OK_ITEMS="$(curl -s "$OK_BASE/api/items")"
+    checkjq '合法 uncategorized 库可加载' 1 '.total' "$OK_ITEMS"
+    checkjq '加载后 type 保持 uncategorized' 'uncategorized' '.items[0].type' "$OK_ITEMS"
+    kill "$SERVER_PID" 2>/dev/null
 else
-    wait "$BAD_PID" 2>/dev/null
-    BAD_RC=$?
-    check '损坏的数据库文件拒绝启动（非零退出）' true "$([[ "$BAD_RC" -ne 0 ]] && echo true || echo false)"
+    check '合法 uncategorized 库可加载' true false
+    cat "$WORK/ok_uncategorized.log" >&2
 fi
-check '损坏文件未被空库覆盖' "$BAD_BEFORE" "$(cat "$BAD_DB")"
-check '启动失败有明确日志' true \
-    "$(grep -qiE 'fatal|aborted' "$WORK/corrupt.log" && echo true || echo false)"
+
+make_db_file "$WORK/ok_boundary.json" \
+    '.title = ("a" * 200) | .tags = [range(0;20) | "t\(.)" + ("a" * 40)] | .score = 100 | .progress = 1'
+OK2_PORT="$(free_port 19700 19800)"
+OK2_BASE="http://127.0.0.1:$OK2_PORT"
+if start_server "$WORK/ok_boundary.json" "$OK2_PORT" "$WORK/ok_boundary.log"; then
+    checkjq '合法边界值（200 字节 title / 20 个 tag / score 100 / progress 1）可加载' 1 \
+        '.total' "$(curl -s "$OK2_BASE/api/items")"
+    kill "$SERVER_PID" 2>/dev/null
+else
+    check '合法边界值（200 字节 title / 20 个 tag / score 100 / progress 1）可加载' true false
+    cat "$WORK/ok_boundary.log" >&2
+fi
 fi
 
 # ---------------------------------------------------------------------------
