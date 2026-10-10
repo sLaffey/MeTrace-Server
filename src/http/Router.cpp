@@ -313,9 +313,17 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
             return;
         }
 
-        const metrace::core::Item* ins = db.createItem(item);
-        res.status = 201;
-        res.set_content(ins->toJson().dump(), kJsonType);
+        const metrace::service::ItemResult ins = db.createItem(item);
+        switch (ins.status) {
+            case metrace::service::WriteStatus::Ok:
+                res.status = 201;
+                res.set_content(ins.item->toJson().dump(), kJsonType);
+                break;
+            case metrace::service::WriteStatus::PersistFailed:
+                res.status = 500;
+                res.set_content(errorBody("Persist Failed"), kJsonType);
+                break;
+        }
         return;
     });
 
@@ -354,15 +362,32 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
             return;
         }
 
-        item = db.updateItem(id.value(), patch);
-        res.set_content(item->toJson().dump(), kJsonType);
+        const metrace::service::ItemResult ans = db.updateItem(id.value(), patch);
+        switch (ans.status) {
+            case metrace::service::WriteStatus::Ok:
+                res.set_content(ans.item->toJson().dump(), kJsonType);
+                break;
+            case metrace::service::WriteStatus::NotFound:
+                res.set_content(errorBody("Item Not Found"), kJsonType);
+                break;
+            case metrace::service::WriteStatus::PersistFailed:
+                res.set_content(errorBody("Persist Failed"), kJsonType);
+                break;
+        }
+        
         return;
     });
 
     // DELETE /api/items/{id} 删除条目，返回 204
     server.Delete("/api/items/(\\d+)", [&db](const httplib::Request& req, httplib::Response& res) {
         const std::optional<int> id = parseItemId(req);
-        if (!id.has_value() || !db.removeItem(id.value())) {
+        if (!id.has_value()) {
+            res.status = 404;
+            res.set_content(errorBody("Item not found"), kJsonType);
+            return;
+        }
+        const metrace::service::WriteStatus ans = db.removeItem(id.value());
+        if (ans == metrace::service::WriteStatus::NotFound) {
             res.status = 404;
             res.set_content(errorBody("Item not found"), kJsonType);
         }
@@ -394,7 +419,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         return;
     });
 
-    server.set_exception_handler([](const httplib::Request& req, httplib::Response& res, std::exception_ptr ep) {
+    server.set_exception_handler([](const httplib::Request&, httplib::Response& res, std::exception_ptr ep) {
         std::string what = "unknown";
         try { std::rethrow_exception(ep); }
         catch (const std::exception& e) { what = e.what(); }
@@ -403,7 +428,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         res.set_content(errorBody("Internal server error"), kJsonType);
     });
 
-    server.set_error_handler([](const httplib::Request& req, httplib::Response& res) {
+    server.set_error_handler([](const httplib::Request&, httplib::Response& res) {
         if (!res.body.empty()) return;
         res.set_content(res.status == 404 ? errorBody("Not found") : errorBody("Request failed"), kJsonType);
     });

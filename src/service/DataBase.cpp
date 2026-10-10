@@ -142,7 +142,8 @@ bool DataBase::load(const std::string& dbPath)
 /// @brief save DataBase to dbPath
 /// @param dbPath 
 /// @return true if success, false if failed
-bool DataBase::save(const std::string& dbPath) const
+/// @note nodiscard http 层需要根据返回值判断是否返回 500
+[[nodiscard]] bool DataBase::save(const std::string& dbPath) const
 {
     namespace fs = std::filesystem;
     using json = nlohmann::json;
@@ -192,18 +193,19 @@ const metrace::core::Item* DataBase::getItem(int id) const
     return item;
 }
 
-/// @brief 根据传入的 patch 更新条目，返回更新后的条目指针，若不存在返回 nullptr
+/// @brief 根据传入的 patch 更新条目
 /// @param id 
 /// @param patch 
-/// @return 更新后的条目指针，不存在则为 nullptr
-const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const metrace::service::ItemPatch& patch)
+/// @return WriteStatus 与指针的结构体，若持久化失败则回退至修改前
+const ItemResult metrace::service::DataBase::updateItem(int id, const metrace::service::ItemPatch& patch)
 {
     std::lock_guard<std::mutex> lock(mtx);
     metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
     if (item == nullptr) {
-        return nullptr;
+        return {WriteStatus::NotFound, nullptr};
     }
 
+    const metrace::core::Item before = *item;
     if (patch.type.has_value()) item->setType(patch.type.value());
     if (patch.title.has_value()) item->setTitle(patch.title.value());
     if (patch.author.has_value()) item->setAuthor(patch.author.value());
@@ -216,26 +218,30 @@ const metrace::core::Item* metrace::service::DataBase::updateItem(int id, const 
     item->touch();
     registerTags(item->getTags());
 
-    save(db_path);
+    if (!save(db_path)) {
+        *item = before;
+        return {WriteStatus::PersistFailed, nullptr};
+    }
 
-    return item;
+    return {WriteStatus::Ok, item};
 }
 
 /// @brief 根据 id 删除条目
 /// @param id 
 /// @return 是否成功删除
-bool metrace::service::DataBase::removeItem(int id)
+const WriteStatus metrace::service::DataBase::removeItem(int id)
 {
     std::lock_guard<std::mutex> lock(mtx);
     bool ans = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
-    save(db_path);
-    return ans;
+    if (!ans) return WriteStatus::NotFound;
+    if (!save(db_path)) return WriteStatus::PersistFailed;
+    return WriteStatus::Ok;
 }
 
 /// @brief 插入新条目，自动去重和注册 tag、分配 id、创建和更新时间
 /// @param item 
 /// @return 指向新条目的指针
-const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
+const ItemResult DataBase::createItem(metrace::core::Item item)
 {
     std::lock_guard<std::mutex> lock(mtx);
     item.id = next_id++;
@@ -245,20 +251,23 @@ const metrace::core::Item* DataBase::createItem(metrace::core::Item item)
     registerTags(item.tags);
     const metrace::core::Item* res = items.insert(item);
 
-    save(db_path);
-    return res;
+    if (!save(db_path)) {
+        items.remove(item);
+        return {WriteStatus::PersistFailed, nullptr};
+    }
+    return {WriteStatus::Ok, res};
 }
 
 /// @brief 插入新标签
 /// @param tag 
-/// @return 若已经存在则返回 false
-bool DataBase::createTag(const metrace::core::Tag& tag)
+/// @return 是否成功创建
+const WriteStatus DataBase::createTag(const metrace::core::Tag& tag)
 {
     std::lock_guard<std::mutex> lock(mtx);
     bool res = tags.insert(tag);
     
-    save(db_path);
-    return res;
+    if (!res || save(db_path)) return WriteStatus::Ok;
+    return WriteStatus::PersistFailed;
 }
 
 void DataBase::registerTags(const std::vector<metrace::core::Tag>& _tags)

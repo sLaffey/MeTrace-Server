@@ -56,6 +56,15 @@ struct ItemPatch {
     std::optional<std::vector<metrace::core::Tag>> tags;
 };
 
+enum class WriteStatus {
+    Ok, NotFound, PersistFailed
+};
+
+struct ItemResult {
+    WriteStatus status = WriteStatus::PersistFailed;
+    const metrace::core::Item* item = nullptr;
+};
+
 class DataBase {
 private:
     int next_id = 1;
@@ -76,15 +85,15 @@ public:
 
     explicit DataBase(const std::string& dbPath);
 
-    bool save(const std::string& dbPath) const;
+    [[nodiscard]] bool save(const std::string& dbPath) const;
     bool load(const std::string& dbPath);
 
     const metrace::core::Item* getItem(int id) const;
-    const metrace::core::Item* updateItem(int id, const metrace::service::ItemPatch& patch);
-    bool removeItem(int id);
-    const metrace::core::Item* createItem(metrace::core::Item item);
 
-    bool createTag(const metrace::core::Tag& tag);
+    const ItemResult updateItem(int id, const metrace::service::ItemPatch& patch);
+    const ItemResult createItem(metrace::core::Item item);
+    const WriteStatus removeItem(int id);
+    const WriteStatus createTag(const metrace::core::Tag& tag);
 
     const ItemQueryResult queryItem(const metrace::service::ItemQuery& query) const;
     const TagQueryResult queryTag(const metrace::service::TagQuery& query) const;
