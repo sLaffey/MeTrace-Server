@@ -81,6 +81,14 @@ bool DataBase::load(const std::string& dbPath)
     try {
         json data = json::parse(file);
         int max_id = 0;
+        if (!(data.contains("items") && data.contains("tags"))) {
+            std::cerr << "[DataBase] Fatal: Incomplete database file, missing either items or tags." << std::endl;
+            return false;
+        }
+        if (!(data["items"].is_array() && data["tags"].is_array())) {
+            std::cerr << "[DataBase] Fatal: Invalid value of items/tags, must be an array." << std::endl;
+            return false;
+        }
         for (const auto& itemJson : data["tags"]) {
             tags.insert(itemJson);
         }
