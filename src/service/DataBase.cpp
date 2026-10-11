@@ -237,7 +237,7 @@ const ItemResult metrace::service::DataBase::updateItem(int id, const metrace::s
 /// @brief 根据 id 删除条目
 /// @param id 
 /// @return 是否成功删除
-const WriteStatus metrace::service::DataBase::removeItem(int id)
+WriteStatus metrace::service::DataBase::removeItem(int id)
 {
     std::lock_guard<std::mutex> lock(mtx);
     bool ans = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
@@ -269,7 +269,7 @@ const ItemResult DataBase::createItem(metrace::core::Item item)
 /// @brief 插入新标签
 /// @param tag 
 /// @return 是否成功创建
-const WriteStatus DataBase::createTag(const metrace::core::Tag& tag)
+WriteStatus DataBase::createTag(const metrace::core::Tag& tag)
 {
     std::lock_guard<std::mutex> lock(mtx);
     bool res = tags.insert(tag);

@@ -92,8 +92,8 @@ public:
 
     const ItemResult updateItem(int id, const metrace::service::ItemPatch& patch);
     const ItemResult createItem(metrace::core::Item item);
-    const WriteStatus removeItem(int id);
-    const WriteStatus createTag(const metrace::core::Tag& tag);
+    WriteStatus removeItem(int id);
+    WriteStatus createTag(const metrace::core::Tag& tag);
 
     const ItemQueryResult queryItem(const metrace::service::ItemQuery& query) const;
     const TagQueryResult queryTag(const metrace::service::TagQuery& query) const;
