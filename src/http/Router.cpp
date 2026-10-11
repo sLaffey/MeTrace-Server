@@ -323,6 +323,8 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
                 res.status = 500;
                 res.set_content(errorBody("Persist Failed"), kJsonType);
                 break;
+            case metrace::service::WriteStatus::NotFound:
+                throw std::runtime_error("Unexpected return value of DataBase::createItem(), get metrace::service::WriteStatus::NotFound.");
         }
         return;
     });
@@ -416,6 +418,40 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         }
 
         res.set_content(j.dump(), kJsonType);
+        return;
+    });
+
+    // POST /api/tags 新增标签，返回 201 和 tag 名称
+    server.Post("/api/tags", [&db](const httplib::Request& req, httplib::Response& res) {
+        if (!req.has_param("name")) {
+            res.status = 400;
+            res.set_content(errorBody("Need parameter \"name\""), kJsonType);
+            return;
+        }
+
+        metrace::core::Tag tag = req.get_param_value("name");
+        if (!metrace::core::checkTag(tag)) {
+            res.status = 400;
+            res.set_content(errorBody("Tag must be non-empty and <=50 bytes"), kJsonType);
+            return;
+        }
+
+        metrace::service::WriteStatus st = db.createTag(tag);
+        switch (st) {
+            case metrace::service::WriteStatus::PersistFailed:
+                res.status = 500;
+                res.set_content(errorBody("Persist Failed"), kJsonType);
+                break;
+            case metrace::service::WriteStatus::Ok: {
+                res.status = 200;
+                nlohmann::json j;
+                j["name"] = tag;
+                res.set_content(j.dump(), kJsonType);
+                break;
+            }
+            case metrace::service::WriteStatus::NotFound:
+                throw std::runtime_error("Unexpected return value of DataBase::createTag(), get metrace::service::WriteStatus::NotFound.");
+        }
         return;
     });
 
