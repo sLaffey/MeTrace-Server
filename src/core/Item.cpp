@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <algorithm>
 
+#include <nlohmann/json.hpp>
+
 #include "core/Item.h"
 
 namespace metrace::core {
@@ -90,18 +92,18 @@ nlohmann::json Item::toJson() const
 Item Item::fromJson(const nlohmann::json& j)
 {
     Item item;
-    item.id = j["id"];
-    item.type = j["type"].get<std::string>();
-    item.title = j["title"].get<std::string>();
-    item.author = j["author"].get<std::string>();
-    item.description = j["description"].get<std::string>();
-    item.date = j["date"].get<std::string>();
-    item.progress = j["progress"].get<double>();
-    item.score = j["score"].get<int>();
-    item.comment = j["comment"].get<std::string>();
-    item.tags = j["tags"].get<std::vector<metrace::core::Tag>>();
-    item.created_at = j["created_at"].get<std::int64_t>();
-    item.updated_at = j["updated_at"].get<std::int64_t>();
+    item.id = j.at("id");
+    item.type = j.at("type").get<std::string>();
+    item.title = j.at("title").get<std::string>();
+    item.author = j.at("author").get<std::string>();
+    item.description = j.at("description").get<std::string>();
+    item.date = j.at("date").get<std::string>();
+    item.progress = j.at("progress").get<double>();
+    item.score = j.at("score").get<int>();
+    item.comment = j.at("comment").get<std::string>();
+    item.tags = j.at("tags").get<std::vector<metrace::core::Tag>>();
+    item.created_at = j.at("created_at").get<std::int64_t>();
+    item.updated_at = j.at("updated_at").get<std::int64_t>();
     return item;
 }
 
