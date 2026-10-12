@@ -85,6 +85,8 @@ public:
 
     explicit DataBase(const std::string& dbPath);
 
+    void clear();
+
     [[nodiscard]] bool save(const std::string& dbPath) const;
     bool load(const std::string& dbPath);
 

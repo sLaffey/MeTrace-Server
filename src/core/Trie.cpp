@@ -2,6 +2,13 @@
 
 namespace metrace::core {
 
+void Trie::clear()
+{
+    for (Node* p : head.next) delete p; // 递归析构
+    head.cnt_next = 0;
+    head.is_word = false;
+}
+
 /// @brief 递归删除单词
 /// @param cur 
 /// @param s 

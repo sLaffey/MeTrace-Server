@@ -61,11 +61,21 @@ DataBase::DataBase(const std::string& dbPath)
     }
 }
 
+void DataBase::clear()
+{
+    std::lock_guard<std::mutex> lock(mtx);
+    next_id = 1;
+    items.clear();
+    tags.clear();
+    db_path.clear();
+}
+
 /// @brief 从 dbPath 处的 json 文件加载数据库, json 文件约定: { "items": [...], "tags": [...], "next_id": <int> }
 /// @param dbPath 
 /// @return true if success, false if failed
 bool DataBase::load(const std::string& dbPath)
 {
+    clear();
     db_path = dbPath;
     // json 文件约定: { "items": [...], "tags": [...], "next_id": <int> }
     using json = nlohmann::json;

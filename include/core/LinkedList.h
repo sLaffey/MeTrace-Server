@@ -20,15 +20,22 @@ private:
 public:
     LinkedList() : head(nullptr), size(0) {}
     ~LinkedList() {
+        clear();
+    }
+    LinkedList(const LinkedList&) = delete;
+    LinkedList& operator = (const LinkedList&) = delete;
+
+    void clear()
+    {
         Node* cur = head;
         while (cur) {
             Node *next = cur->next;
             delete cur;
             cur = next;
         }
+        head = nullptr;
+        size = 0;
     }
-    LinkedList(const LinkedList&) = delete;
-    LinkedList& operator = (const LinkedList&) = delete;
 
     std::size_t getSize() const { return size; }
 

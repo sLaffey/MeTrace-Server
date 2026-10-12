@@ -45,9 +45,11 @@ private:
 
 public:
     Trie() = default;
-    ~Trie() = default;
+    ~Trie() = default; // 利用 Node 的递归析构避免内存泄漏问题
     Trie(const Trie&) = delete; // 防止浅拷贝带来的问题
     Trie& operator = (const Trie&) = delete;
+
+    void clear();
 
     bool insert(const std::string& s);
     bool remove(const std::string& s);
