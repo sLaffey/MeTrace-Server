@@ -370,9 +370,11 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
                 res.set_content(ans.item->toJson().dump(), kJsonType);
                 break;
             case metrace::service::WriteStatus::NotFound:
+                res.status = 404;
                 res.set_content(errorBody("Item Not Found"), kJsonType);
                 break;
             case metrace::service::WriteStatus::PersistFailed:
+                res.status = 500;
                 res.set_content(errorBody("Persist Failed"), kJsonType);
                 break;
         }
@@ -389,12 +391,18 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
             return;
         }
         const metrace::service::WriteStatus ans = db.removeItem(id.value());
-        if (ans == metrace::service::WriteStatus::NotFound) {
-            res.status = 404;
-            res.set_content(errorBody("Item not found"), kJsonType);
-        }
-        else {
-            res.status = 204;
+        switch (ans) {
+            case metrace::service::WriteStatus::Ok:
+                res.status = 204;
+                break;
+            case metrace::service::WriteStatus::NotFound:
+                res.status = 404;
+                res.set_content(errorBody("Item not found"), kJsonType);
+                break;
+            case metrace::service::WriteStatus::PersistFailed:
+                res.status = 500;
+                res.set_content(errorBody("Persist Failed"), kJsonType);
+                break;
         }
         return;
     });
