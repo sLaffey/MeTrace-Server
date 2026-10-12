@@ -423,13 +423,15 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
 
     // POST /api/tags 新增标签，返回 201 和 tag 名称
     server.Post("/api/tags", [&db](const httplib::Request& req, httplib::Response& res) {
-        if (!req.has_param("name")) {
+        const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
+
+        if (!body.contains("name")) {
             res.status = 400;
             res.set_content(errorBody("Need parameter \"name\""), kJsonType);
             return;
         }
 
-        metrace::core::Tag tag = req.get_param_value("name");
+        metrace::core::Tag tag = body.at("name");
         if (!metrace::core::checkTag(tag)) {
             res.status = 400;
             res.set_content(errorBody("Tag must be non-empty and <=50 bytes"), kJsonType);
@@ -443,7 +445,7 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
                 res.set_content(errorBody("Persist Failed"), kJsonType);
                 break;
             case metrace::service::WriteStatus::Ok: {
-                res.status = 200;
+                res.status = 201;
                 nlohmann::json j;
                 j["name"] = tag;
                 res.set_content(j.dump(), kJsonType);
