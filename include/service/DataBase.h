@@ -78,6 +78,10 @@ private:
     void registerTags(const std::vector<metrace::core::Tag>& tags);
     bool removeTag(const metrace::core::Tag& tag);
 
+    [[nodiscard]] bool saveUnlocked(const std::string& dbPath) const;
+    bool loadUnlocked(const std::string& dbPath);
+    void clearUnlocked();
+
 public:
     DataBase() = default;
     DataBase(const DataBase&) = delete;

@@ -52,6 +52,12 @@ bool better(const metrace::core::Item& a, const metrace::core::Item& b, const me
     return a.getId() < b.getId();
 }
 
+struct StagedData {
+    std::vector<metrace::core::Item> items;
+    std::vector<metrace::core::Tag> tags;
+    int next_id = 1;
+};
+
 } // namespace
 
 DataBase::DataBase(const std::string& dbPath)
@@ -61,22 +67,27 @@ DataBase::DataBase(const std::string& dbPath)
     }
 }
 
-void DataBase::clear()
+void DataBase::clearUnlocked()
 {
-    std::lock_guard<std::mutex> lock(mtx);
     next_id = 1;
     items.clear();
     tags.clear();
     db_path.clear();
 }
 
+void DataBase::clear()
+{
+    std::lock_guard<std::mutex> lock(mtx);
+    return clearUnlocked();
+}
+
 /// @brief 从 dbPath 处的 json 文件加载数据库, json 文件约定: { "items": [...], "tags": [...], "next_id": <int> }
 /// @param dbPath 
 /// @return true if success, false if failed
-bool DataBase::load(const std::string& dbPath)
+bool DataBase::loadUnlocked(const std::string& dbPath)
 {
-    clear();
-    db_path = dbPath;
+    StagedData staged;
+
     // json 文件约定: { "items": [...], "tags": [...], "next_id": <int> }
     using json = nlohmann::json;
     std::ifstream file(dbPath);
@@ -100,7 +111,7 @@ bool DataBase::load(const std::string& dbPath)
             return false;
         }
         for (const auto& itemJson : data["tags"]) {
-            tags.insert(itemJson);
+            staged.tags.push_back(itemJson);
         }
 
         std::unordered_set<int> seen;
@@ -140,28 +151,44 @@ bool DataBase::load(const std::string& dbPath)
             }
 
             item.setTags(kept_tags);
-            items.insert(item);
+            staged.items.push_back(item);
             max_id = std::max(max_id, item.getId());
         }
         int data_id = data.value("next_id", 0);
         if (data_id < max_id + 1) {
             std::cerr << "[DataBase] Warning: \"next_id\" in database file is less or equal to some actual item id"
                 << ", reallocated next_id." << std::endl;
-            next_id = max_id + 1;
+            staged.next_id = max_id + 1;
         }
-        else next_id = data_id;
+        else staged.next_id = data_id;
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[DataBase] Fatal: Can't load database file in " << dbPath << " with exception " << e.what() << std::endl;
         return false;
     }
+
+    clearUnlocked();
+    for (const metrace::core::Item& item : staged.items) {
+        items.insert(item);
+    }
+    for (const metrace::core::Tag& tag : staged.tags) {
+        tags.insert(tag);
+    }
+    next_id = staged.next_id;
+    db_path = dbPath;
     return true;
+}
+
+bool DataBase::load(const std::string& dbPath)
+{
+    std::lock_guard<std::mutex> lock(mtx);
+    return loadUnlocked(dbPath);
 }
 
 /// @brief save DataBase to dbPath
 /// @param dbPath 
 /// @return true if success, false if failed
 /// @note nodiscard http 层需要根据返回值判断是否返回 500
-[[nodiscard]] bool DataBase::save(const std::string& dbPath) const
+[[nodiscard]] bool DataBase::saveUnlocked(const std::string& dbPath) const
 {
     namespace fs = std::filesystem;
     using json = nlohmann::json;
@@ -199,6 +226,12 @@ bool DataBase::load(const std::string& dbPath)
     }
 
     return true;
+}
+
+[[nodiscard]] bool DataBase::save(const std::string& dbPath) const
+{
+    std::lock_guard<std::mutex> lock(mtx);
+    return saveUnlocked(dbPath);
 }
 
 /// @brief 按照 id 获取条目，返回指针，若不存在返回 nullptr
