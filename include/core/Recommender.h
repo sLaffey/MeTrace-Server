@@ -16,21 +16,18 @@ struct Recommendation {
     const Item* item;
 };
 
-/// @brief 相似度 = 3×共同标签数 + 2×同作者 + 1×同类型（§8.5）
-/// @details 共同标签用双指针在两条已排序去重的 tags 上求交，O(k1+k2)，k ≤ 20；
-///          同作者要求两者 author 均非空且相等（两个"未知"不构成相似）；
-///          type 必填合法，相等即计分
+/// @brief 相似度 = 3×共同标签数 + 2×同作者 + 1×同类型
+/// @details 共同标签用双指针在两条已排序去重的 tags 上求交
 int similarityScore(const Item& target, const Item& other);
 
-/// @brief 推荐全序：相似度高→低；同分评分高→低（未评分 0 最后）；再同分 id 小→大
-/// @note 比较器必须全序（id 兜底）——分批/翻页与确定性输出的硬前提（同 §9.4）
+/// @brief 推荐顺序：相似度高到低；同分评分高到低；再同分按 id 从小到大
 bool betterRecommendation(const Recommendation& a, const Recommendation& b);
 
-/// @brief 取与 target 最相似的 topN 条（best→worst）
+/// @brief 取与 target 最相似的 topN 条（best -> worst）
 /// @param candidates 候选条目；调用方保证不含 target 自身
-/// @param target 目标条目；nullptr 表示冷启动（score 全 0，退化为全局评分榜）
-/// @param top_n 取多少条（0 或空候选返回空；调用方已做契约截断）
-/// @note 实现：淘汰堆 O(n log topN)；堆顶 = 当前最差
+/// @param target 目标条目；nullptr 表示 score 全 0，退化为全局评分榜
+/// @param top_n 取多少条
+/// @note 实现：淘汰堆 O(n log topN)
 std::vector<const Item*> recommendTopN(const std::vector<const Item*>& candidates,
                                        const Item* target, std::size_t top_n);
 

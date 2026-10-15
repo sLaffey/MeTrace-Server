@@ -244,7 +244,7 @@ bool DataBase::load(const std::string& dbPath)
 /// @brief 按照 id 获取条目，返回指针，若不存在返回 nullptr
 /// @param id 
 /// @return 一个指向条目的指针，若不存在返回 nullptr
-/// @note 走 id 索引（HashTable），平均 O(1)；返回的指针只在锁内有效（§5.2）
+/// @note 走 id 索引（HashTable），平均 O(1)；返回的指针只在锁内有效
 const metrace::core::Item* DataBase::getItem(int id) const
 {
     std::lock_guard<std::mutex> lock(mtx);
@@ -416,9 +416,9 @@ const TagQueryResult DataBase::queryTag(const TagQuery& query) const
     return res;
 }
 
-/// @brief 相似推荐：score = 3×共同标签数 + 2×同作者 + 1×同类型（§8.5）
-/// @param query item_id 缺省 = 冷启动评分榜；top_n 已由 Router 截断
-/// @return nullopt = 指定 item_id 不存在；空 vector = 合法空结果
+/// @brief 相似推荐：score = 3×共同标签数 + 2×同作者 + 1×同类型
+/// @param query item_id 缺省为评分榜
+/// @return nullopt 表示指定 item_id 不存在
 std::optional<std::vector<const metrace::core::Item*>> DataBase::recommend(const RecommendQuery& query) const
 {
     std::lock_guard<std::mutex> lock(mtx);
@@ -444,7 +444,7 @@ std::optional<std::vector<const metrace::core::Item*>> DataBase::recommend(const
 }
 
 /// @brief 统计聚合：total（受 type 过滤）/ by_type（全库，按名有序）/ score_dist（受 type 过滤）
-/// @param query type 缺省 = 全库
+/// @param query type 缺省为全库
 /// @note 单趟扫描 O(n)；评分桶：0、1-10、11-20、…、91-100（未评分 0 独立成桶）
 const StatsResult DataBase::stats(const StatsQuery& query) const
 {

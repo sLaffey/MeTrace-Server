@@ -6,7 +6,7 @@
 namespace metrace::core {
 
 /// @brief 链地址法哈希表：键固定 int，值类型由模板参数给出；桶数取素数，负载因子 > 0.75 时扩容（摘下重挂）
-/// @tparam V 值类型；本表**不拥有值**——析构只释放 Entry 与桶数组，绝不析构 value
+/// @tparam V 值类型
 /// @note 平均查找/插入/删除 O(1)，最坏 O(n)；单次扩容 O(n) 摊还到每次插入为 O(1)
 template <typename V>
 class HashTable {
@@ -23,39 +23,39 @@ private:
     std::size_t bucket_count;
     std::size_t size;
 
-    // 约 2 倍的素数序列；到最后一档后不再扩容（课设规模远达不到，保持简单）
+    // 约 2 倍的素数序列；到最后一档后不再扩容
     static constexpr std::size_t kBucketSizes[] = {
         17, 37, 79, 163, 331, 673, 1361, 2729, 5471,
         10949, 21911, 43853, 87719, 175447, 350899
     };
     std::size_t bucket_step;
 
-    /// @brief 除法散列：把 key 映射到 [0, count)
+    /// @brief 散列函数：把 key 映射到 [0, count)
     static std::size_t bucketIndex(int key, std::size_t count)
     {
         return static_cast<std::size_t>(key) % count;
     }
 
-    /// @brief 扩容到 new_count 个桶：旧桶里的 Entry 摘下重挂（不复制值、不额外分配节点）
+    /// @brief 扩容到 new_count 个桶
     void rehash(std::size_t new_count);
 
 public:
     HashTable();
     ~HashTable();
 
-    HashTable(const HashTable&) = delete;             // 三法则：拥有桶数组与 Entry，禁止浅拷贝
+    HashTable(const HashTable&) = delete;             // 禁止浅拷贝
     HashTable& operator = (const HashTable&) = delete;
 
     /// @brief 查找 key，返回指向表内 value 的指针；不存在返回 nullptr
     V* find(int key) const;
 
-    /// @brief 插入键值对；key 已存在则覆盖旧值（正常业务路径由调用方保证键唯一）
+    /// @brief 插入键值对；key 已存在则覆盖旧值，唯一性由调用方保证
     void insert(int key, const V& value);
 
     /// @brief 删除 key；找到并删除返回 true，不存在返回 false
     bool erase(int key);
 
-    /// @brief 清空全部条目（只删 Entry，不触碰 value）
+    /// @brief 清空全部条目
     void clear();
 
     std::size_t getSize() const { return size; }
@@ -101,7 +101,7 @@ void HashTable<V>::insert(int key, const V& value)
     buckets[index] = entry;
     ++size;
 
-    // 负载因子 > 0.75 用整数比较：size / bucket_count > 3 / 4
+    // 负载因子 > 0.75
     if (size * 4 > bucket_count * 3 && bucket_step + 1 < std::size(kBucketSizes)) {
         ++bucket_step;
         rehash(kBucketSizes[bucket_step]);

@@ -25,7 +25,7 @@ enum class SortField {
 struct ItemQuery {
     std::optional<std::string> type;
     std::optional<metrace::core::Tag> tag;
-    std::optional<std::string> keyword; ///< 标题前缀过滤（/api/search 用），缺省不过滤
+    std::optional<std::string> keyword; // 标题前缀过滤（/api/search 用），缺省不过滤
     SortField sort_field = SortField::CreatedAt;
     bool descending = true;
     std::size_t limit = 20;
@@ -48,18 +48,18 @@ struct TagQueryResult {
 };
 
 struct RecommendQuery {
-    std::optional<int> item_id; ///< 缺省 = 冷启动（全局评分榜）
-    std::size_t top_n = 10;     ///< Router 已按契约截断到 [1,50]
+    std::optional<int> item_id; // 缺省为全局评分榜
+    std::size_t top_n = 10;     // Router 负责截断到 [1,50]
 };
 
 struct StatsQuery {
-    std::optional<std::string> type; ///< 缺省 = 全库
+    std::optional<std::string> type; // 缺省 = 全库
 };
 
 struct StatsResult {
-    std::size_t total = 0;                                       ///< 应用 type 过滤后的总数
-    std::vector<std::pair<std::string, std::size_t>> by_type;    ///< 全库各类型计数（按名有序；仅含出现过的类型）
-    std::vector<std::pair<std::string, std::size_t>> score_dist; ///< 过滤后的评分分布（桶：0,1-10,…,91-100）
+    std::size_t total = 0;                                       // 应用 type 过滤后的总数
+    std::vector<std::pair<std::string, std::size_t>> by_type;    // 全库各类型计数（按名有序；仅含出现过的类型）
+    std::vector<std::pair<std::string, std::size_t>> score_dist; // 过滤后的评分分布（桶：0,1-10,…,91-100）
 };
 
 struct ItemPatch {
@@ -87,7 +87,7 @@ class DataBase {
 private:
     int next_id = 1;
     metrace::core::LinkedList<metrace::core::Item> items;
-    metrace::core::HashTable<metrace::core::Item*> item_index; ///< id → Item*（指向 items 节点内部），与链表在同一把锁内同步维护
+    metrace::core::HashTable<metrace::core::Item*> item_index; // id -> Item*, 与链表同步维护
     metrace::core::Trie tags;
 
     std::string db_path;
@@ -123,11 +123,11 @@ public:
     const ItemQueryResult queryItem(const metrace::service::ItemQuery& query) const;
     const TagQueryResult queryTag(const metrace::service::TagQuery& query) const;
 
-    /// @brief 相似推荐（§8.5）
-    /// @return nullopt = item_id 指定但不存在；空 vector = 合法空结果（空库 / 只有自身）
+    /// @brief 相似推荐
+    /// @return nullopt 表示 item_id 指定但不存在；空 vector 表示合法空结果
     std::optional<std::vector<const metrace::core::Item*>> recommend(const RecommendQuery& query) const;
 
-    /// @brief 统计聚合：total/by_type/score_dist（§8.2）
+    /// @brief 统计聚合：total/by_type/score_dist
     const StatsResult stats(const StatsQuery& query) const;
 };
 
