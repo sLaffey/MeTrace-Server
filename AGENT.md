@@ -45,31 +45,27 @@
 - [x] `src/main.cpp`：参数/环境变量解析、`db.load()` fail-fast；HTTP 启动段已由 Router 接管
 - [x] 数据模型定稿（`include/core/Item.h` 为权威，见 §7）：type 为字符串、score 为 int [1-100]、`Tag` 为 `std::string` 别名；`fromJson` 用 `.at()` 带边界检查（2026-10-11）
 - [x] `LinkedList`：头插 `insert`（返回节点内数据 `const T*`）、`remove`（按值 + 按谓词两版）、`forEach`、`find`（const 值版 + const/可变谓词双重载）、`getSize()` O(1)；**`clear()` 已补（2026-10-12，析构复用 clear）**；三法则齐（拷贝构造/赋值均删）
-- [x] `Trie`：**已接管全局标签表（§7.3）**——insert 返回是否新插 / find / forEach（0..255 字节序 DFS ⇒ 输出即字典序）/ remove（递归清空链）/ **clear（2026-10-12；有悬垂指针缺陷，见 §3.2-4）**；`next[256]`、`unsigned char`、Node 递归析构、删拷贝
+- [x] `Trie`：**已接管全局标签表（§7.3）**——insert 返回是否新插 / find / forEach（0..255 字节序 DFS ⇒ 输出即字典序）/ remove（递归清空链）/ **clear（2026-10-12；2026-10-15 修复"指针置空"与循环下标回绕）**；`next[256]`、`unsigned char`、Node 递归析构、删拷贝
 - [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化；未分类取值由 `"null"` 改名为 `"uncategorized"`（2026-10-08，白名单即 `kItemTypeName[4]`）
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删；**容量为 0 抛 `std::invalid_argument`（2026-10-09 补）**
 - [x] `DataBase`：
-  - 锁：`mutex` + "公有入口加锁、私有 `*Unlocked` 实现"拆分（2026-10-13）；**写方法误调公有 `save()` → 当前 POST/PUT/DELETE 死锁（§3.2-2）**
-  - `load`：**暂存 + 提交两段式**——全部解析/校验进暂存区 `StagedData`（vector<Item> + vector<Tag> + next_id），成功后 `clearUnlocked()` + 逐条复制装入；失败不触碰现状（2026-10-13）；**幽灵标签过滤误查成员 `tags` 而非暂存表，当前加载即丢光条目 tags（§3.2-1）**；文件不存在分支未设 `db_path`（§3.2-3）
+  - 锁：`mutex` + "公有入口加锁、私有 `*Unlocked` 实现"拆分（2026-10-13）；写方法统一调 `saveUnlocked`（2026-10-15）
+  - `load`：**暂存 + 提交两段式**——全部解析/校验进暂存区 `StagedData`（vector<Item> + vector<Tag> + next_id），成功后 `clearUnlocked()` + 逐条复制装入；失败不触碰现状（2026-10-13）；幽灵过滤查暂存表、缺文件分支清空并设 `db_path`（2026-10-15 修复）
   - `save`：原子写（tmp + rename）、失败不退出；`next_id` 偏小 → Warning + `max(文件值, max_id+1)` 规范化（2026-10-09）
   - CRUD：create/update/remove/createTag 返回 `ItemResult`/`WriteStatus`，持久化失败回 500；update 落盘失败回滚条目；DELETE 500/404 修正、PUT 404/500 补状态码（2026-10-12）
 - [x] `queryItem`：Top-N 淘汰堆落地——comp=更差靠堆顶、id 全序兜底、容量 `min(offset+limit, items.getSize())` 钳制、total 分页前统计、两段钳制切片（§9.4）
 - [x] 写路径收口：`createItem` 盖章 id/时间戳 + `uniqueTags` + `registerTags`；`updateItem` 应用 patch 后 `touch()` + `registerTags`
 - [x] `http/Router`：`/`、`/ping`、GET/POST/PUT/DELETE `/api/items(/{id})`、GET `/api/tags`、**POST `/api/tags`（body `{"name":...}` + 201，2026-10-12 修正）**；parse 助手族 + `checkItemJson` 统一键/类型/值域校验 + `errorBody`；`set_error_handler`/`set_exception_handler` 已挂载；switch 对不可能值抛异常兜底
 - [x] load 值域校验落地（2026-10-09）：core 谓词 `checkTitle/checkProgress/checkScore/checkTag/checkTags` + `validateItem`；`load` 逐条校验（值域 + id 唯一性 + 时间戳）后 fail-fast，Router 写路径复用同一份谓词（§6.2/§16.9）
-- [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）；测试副本 `tests/metrace.json`（21 条，含 1 条 `uncategorized`）已纳入版本控制，回归脚本 `tests/test.sh` 自包含起停临时服务端（190 项）
-- [x] **2026-10-15 复核**：构建零警告；`tests/test.sh` **143 通过 / 47 失败**，失败全部由 §3.2-1/2 引起（写请求挂起、加载丢标签）
+- [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）；测试副本 `tests/metrace.json`（21 条，含 1 条 `uncategorized`）已纳入版本控制，回归脚本 `tests/test.sh` 自包含起停临时服务端（2026-10-15 扩到 210 项）
+- [x] **2026-10-15 复核（修复后）**：构建零警告；`tests/test.sh` **210 项全绿**（新增 POST /api/tags 契约与"写 → 重启 → 读"落盘回归）
 
-### 3.2 待办（按优先级，2026-10-15 核对；1~3 是当前测试失败的根因）
+### 3.2 待办（按优先级，2026-10-15 核对；旧缺陷 1~4 与测试缺口均已清）
 
-1. **P0 幽灵标签过滤查错了表（`DataBase.cpp::loadUnlocked`）**：暂存化改造后仍用成员 `tags.find(tag)` 判定幽灵，而此刻成员表是空的/旧的——**加载时所有条目 tags 被当幽灵丢弃**（id=1 的 tags 变 `[]`，测试 47 项红的根因之一）。应改为查 `staged.tags`（排序 + `binary_search`，或临时 `unordered_set`）。
-2. **P0 写路径二次加锁（`DataBase.cpp`）**：`createItem`/`updateItem`/`removeItem`/`createTag` 在持有 `mtx` 时调用公有 `save()`（入口又加锁）= 同线程二次加锁，**POST/PUT/DELETE 全部挂起**（测试里 `000` 超时即此）。应改调 `saveUnlocked(db_path)`；`save()` 壳只留给外部直接调用。
-3. **P0 缺文件分支未设 `db_path`（`DataBase.cpp::loadUnlocked`）**：文件不存在时直接 `return true`，既不清空也不设 `db_path` → 空库启动后首次写操作 `save("")` 必失败回 500（当前被第 2 条掩盖，修完 2 后暴露）。该分支应 `clearUnlocked(); db_path = dbPath;`（或把 `db_path` 统一在入口设置）。
-4. **P1 `Trie::clear()` 悬垂指针（`Trie.cpp`）**：`for (Node* p : head.next) delete p;` 删除后**未把 `head.next[i]` 置空**，之后 insert 的 `operator[]` 会沿悬垂指针走 UAF（重载/重复 clear 场景才触发，现有测试未覆盖）。改为 `for (Node*& p : head.next) { delete p; p = nullptr; }`。
-5. **P1 测试补齐**：`tests/test.sh` 对 `POST /api/tags` 零覆盖（body 契约、201、同名幂等、非法 name 400）；建议再加"加载后 tags 保序去重""空库启动后写操作成功"两个回归点。
-6. 余项：`offset` 解析在 long long→size_t 收窄前补上限检查（§8.3）；`tests/test_<结构>.cpp` 结构单测（§12）；HashTable 接入 getItem/update/remove（§9.5）；Recommender + `/api/recommend`（§8.5）；可选 `/api/search`、`/api/stats`；50~100 条演示数据、1000 条压测（阶段 4）。
-
-> 修复 1~3 后重跑 `tests/test.sh` 应回到 190 项全绿；补齐 4、5 后项数还会增加。
+1. `offset` 解析在 long long→size_t 收窄前补上限检查（§8.3）；
+2. `tests/test_<结构>.cpp` 结构单测（§12）——`Trie::clear` 悬垂/循环回绕这类缺陷 HTTP 回归够不到，需要结构单测直接覆盖；
+3. HashTable 接入 getItem/update/remove（§9.5）；Recommender + `/api/recommend`（§8.5）；可选 `/api/search`、`/api/stats`；
+4. 50~100 条演示数据、1000 条压测（阶段 4）。
 
 > 修复记录：2026-10-06 审查的写路径问题（updateItem 的 touch/registerTags、POST 非抛解析/必填闸门/类型谓词、tags 与 score 校验、错误体统一）已修；同日晚二次修复 PUT 解析/limit 截断/拷贝赋值/text-plain。GET /api/tags 响应键已拍板以代码为准（`tags`），契约回改见 §8.2。~~`getCreatedAt()` 返回 `time_t` 与 int64_t 存储不一致~~（已统一为 `std::int64_t`，过时划去）。
 
@@ -86,7 +82,7 @@
 | 错误通道 | 服务层一律返回值（`bool`/指针/`optional`），不抛异常；异常仅用于库边界与进程兜底 | 失败通道数量 = 真实失败模式数量 |
 | load/save 失败 | load 失败 → 日志 + 退出进程（fail-fast）；save 失败 → 日志 + 该请求回 500，进程继续 | save 半途失败绝不退出服务器 |
 | load 原子化 | 先整体解析/校验到暂存区（`StagedData`），成功后 `clearUnlocked()` + 复制装入；失败不触碰现状 | 启动路径的强保证；复制一次的成本可忽略（2026-10-13 定） |
-| 锁与无锁实现 | 公有入口加锁；内部复用一律走私有 `*Unlocked`（load/save/clear）；构造/析构不参与并发协议（不加锁） | 避免递归锁；二次加锁只可能出现在漏改的调用点（§3.2-2） |
+| 锁与无锁实现 | 公有入口加锁；内部复用一律走私有 `*Unlocked`（load/save/clear）；构造/析构不参与并发协议（不加锁） | 避免递归锁；二次加锁只可能出现在漏改的调用点（e3dd678 实弹，2026-10-15 已修） |
 | PUT 语义 | 除服务端自动管理字段（id/created_at/updated_at）外，全部 9 个用户字段可改（type/title/author/description/date/progress/score/comment/tags），缺省=不改；无 null 语义，空串/0 表空（2026-10-02 修订，原"仅 4 字段"作废） | Item.h 顶部注释的编辑性约定 |
 | GET /api/tags 响应键 | `{"total":N,"tags":[...]}`——响应键与资源名一致 | 2026-10-06 拍板：以代码为准，契约回改（§8.2/README 同步） |
 | 模板 vs 具体 | LinkedList/Heap 模板；HashTable `template<typename V>` 键固定 int；Trie/Item 具体 | 各取所需（§9） |
@@ -111,17 +107,17 @@ MeTrace-Server/
 │   │   ├── HashTable.h          # ○ 空壳：id → Item* 索引（§9.5，服务端第四个核心结构）
 │   │   └── Recommender.h        # ○ 未开始（文件尚未创建）
 │   ├── service/
-│   │   └── DataBase.h           # ◐ 锁 + `*Unlocked`（load/save/clear）+ clear 齐；待修 §3.2-1/2/3
+│   │   └── DataBase.h           # ✓ 锁 + `*Unlocked`（load/save/clear）+ clear 齐
 │   └── http/
 │       └── Router.h             # ✓ 仅两条前向声明（2026-10-09）
 ├── src/                         # 与 include/ 一一对应 + main.cpp
 │   ├── main.cpp                 # ✓ 参数解析 + load fail-fast
 │   ├── core/{Item,Trie}.cpp     # ✓
-│   ├── service/DataBase.cpp     # ◐ 原子 load/锁/落盘齐；待修 §3.2-1/2/3（tests 红）
+│   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘齐（2026-10-15 复核）
 │   └── http/Router.cpp          # ✓ 七路由（含 POST /api/tags）+ 校验 + error/exception handler
 ├── scripts/{build.sh,run.sh}
 ├── tests/
-│   ├── test.sh                  # ◐ 自包含回归（curl + jq，190 项；2026-10-15 复核 143/47）
+│   ├── test.sh                  # ✓ 自包含回归（curl + jq，210 项；2026-10-15 全绿）
 │   ├── metrace.json             # ✓ 测试种子数据（21 条，含 1 条 uncategorized）
 │   └── test_<结构>.cpp          # 计划：简单 assert 程序
 └── data/metrace.json            # 运行时种子 20 条（已 gitignore）
@@ -161,7 +157,7 @@ httplib 用线程池并发处理请求，而链表/堆/哈希表都不是线程�
 
 **锁粒度规则（2026-10-09 实弹）**：锁只出现在**公有方法入口**，私有 helper（`registerTags`/`removeTag`）**一律不加锁**——它们只在已持锁的公有方法内被调用，二次加锁 = 同线程死锁（`std::mutex` 非递归，POST/PUT 会永久挂起）。
 
-**无锁实现与调用点收口（2026-10-13 定）**：`load`/`save`/`clear` 拆成"公有加锁壳 + 私有 `*Unlocked` 芯"，公有方法内部复用一律走 `*Unlocked`。**公有加锁方法之间不得互相调用**——`createItem` 等在持锁时误调公有 `save()`，二次加锁导致 CRUD 全体挂起（§3.2-2），是本条的反面教材。构造函数可调用 `*Unlocked`（对象尚未发布，无并发），析构函数不加锁（调用方保证已停机，§6.4）。
+**无锁实现与调用点收口（2026-10-13 定，2026-10-15 复核）**：`load`/`save`/`clear` 拆成"公有加锁壳 + 私有 `*Unlocked` 芯"，公有方法内部复用一律走 `*Unlocked`。**公有加锁方法之间不得互相调用**——`createItem` 等持锁时若调公有壳就会二次加锁（e3dd678 曾误调 `save()` 导致 CRUD 全体挂起，已修为 `saveUnlocked`；教训见 §19.3-24）。构造函数可调用 `*Unlocked`（对象尚未发布，无并发），析构函数不加锁（调用方保证已停机，§6.4）。
 
 **返回值语义（待评估）**：db 返回的是指向链表节点内部的指针（`const Item*` / `vector<const Item*>`），解锁后另一线程若 DELETE 同一条目，Router 再序列化即 use-after-free。当前按"单客户端、窗口极小"接受；根治方案是 db 返回拷贝，或提供"持锁回调"让 Router 在锁内序列化。
 
@@ -206,7 +202,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - `main` 拿到 false → 打印后 `return 1`。**不许吞错当空库跑**：空库第一次 save 会把可能可修复的数据文件覆盖掉；
 - **原子化（2026-10-13 已实现）**：全部解析/校验落在暂存区 `StagedData`（文件内匿名 namespace），成功后锁内 `clearUnlocked()` + 逐条复制装入——失败时原状态不被触碰，不存在半加载。
 
-> 实现核对（2026-10-15）：暂存化与 `next_id` Warning 均已落地；值域校验 + id 唯一性/时间戳校验 + 失败矩阵测试齐备。**已知缺陷**：① 幽灵过滤仍查成员 `tags`（应查 `staged.tags`），当前加载会丢光条目 tags；② 文件不存在分支未清空、未设 `db_path`；③ 提交阶段先装 items、后装 tags（锁内无观察者，不变量在提交完成后成立）。均见 §3.2-1/3。
+> 实现核对（2026-10-15）：暂存化、`next_id` Warning、值域/id/时间戳校验、幽灵过滤（查 `staged.tags`）、缺文件分支（`clearUnlocked()` + 设 `db_path`）均已落地并有测试覆盖；提交阶段先装 items、后装 tags（锁内无观察者，不变量在提交完成后成立）。
 
 ### 6.3 save（运行期失败不退出；已实现）
 
@@ -215,13 +211,13 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 3. `std::filesystem::rename`（用 `error_code` 重载，不抛）原子替换；任一步失败：删 tmp、`std::cerr` 打 `[save] 阶段: 路径 (ec.message())，原文件未改动`、返回 false → Router 回 500；
 4. 两个失败分支日志要可区分（"写入失败" vs "rename 失败"）；rename 失败时 tmp 已写好、原文件未动，删 tmp 是清理；
 5. 已接受的简化（可写进报告）：save 失败瞬间内存与磁盘分叉，直到下次成功 save 弥合；
-6. **调用约定（2026-10-13）**：实现体是私有 `saveUnlocked(dbPath)`；公有 `save(dbPath)` 只做加锁包装，供外部直接调用。写方法与其它持锁路径必须调 `saveUnlocked`——当前 `createItem` 等仍误调 `save()`，见 §3.2-2。
+6. **调用约定（2026-10-13）**：实现体是私有 `saveUnlocked(dbPath)`；公有 `save(dbPath)` 只做加锁包装，供外部直接调用。写方法与其它持锁路径必须调 `saveUnlocked`（2026-10-15 起写方法已全部改齐）。
 
 ### 6.4 生命周期
 
 `main` 中：`DataBase db;` 声明在 `httplib::Server` **之前**（栈析构顺序相反，杜绝"服务还在跑、库已析构"），`if (!db.load(path)) return 1;`，再 `registerRoutes(server, db)` 传引用。带参构造 `explicit DataBase(const std::string&)` 保留（内部走加锁 `load`；构造期无并发，加锁无害；加载失败抛 `std::runtime_error`，仅供测试/工具场景快捷使用）；`main` 统一"默认构造 + load"。
 
-补充（2026-10-13）：公有 `clear()` 会清空 items/tags/next_id **和 `db_path`**，clear 之后必须重新 `load` 才能落盘；缺文件加载分支尚未设置 `db_path`（§3.2-3）。
+补充（2026-10-13，2026-10-15 修复）：公有 `clear()` 会清空 items/tags/next_id **和 `db_path`**，clear 之后必须重新 `load` 才能落盘；缺文件加载分支会清空并设置 `db_path`。
 
 ---
 
@@ -300,7 +296,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | `tag` | 任意字符串，按名精确匹配，缺省不过滤 |
 | `sort` | `[-]created_at/score/date/title`，默认 `-created_at`；`-` 前缀=倒序；非法 → 400 |
 | `limit` | 非数字 → 400；越界 → **静默截断**到 1~100（枚举非法报错、数值越界宽容，是刻意的不对称） |
-| `offset` | 非数字或负数 → 400（以代码为准）；无上界但堆容量有防护（§9.4），收窄上限检查待补（§3.2-6） |
+| `offset` | 非数字或负数 → 400（以代码为准）；无上界但堆容量有防护（§9.4），收窄上限检查待补（§3.2-1） |
 
 实现要点：整数解析用 `std::from_chars`（严格、不抛、拒绝 `"20x"`），不用 `stoi`；校验产物装入 `ItemQuery`；未知参数忽略、空值视同未提供。`ItemQuery/SortField/ListResult` 定义在 `DataBase.h`（类型沉降，§5.3）。
 
@@ -336,7 +332,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **角色（2026-10-02 定，§7.3）**：Trie 即全局标签表本体——查重 `query` O(L)、有序枚举/收集 `collect`（DFS 按 0..255 字节序访问孩子 ⇒ 输出即 UTF-8 字节字典序，正是 GET /api/tags 与 save 的输出序）、`remove`（removeRec 顺带清空链；当前无接口调用，留给将来的标签删除，§7.3④）；/api/search 若实施默认线性前缀扫描、不依赖 Trie（§18）
 - 修缮已完成（2026-10-02 核对）：`next[256]`（中文 UTF-8 字节 ≥0x80，128 会越界）；下标统一 `unsigned char`（char 有符号，负下标是 UB，警告 `-Wchar-subscripts` 即此问题）；Node 递归析构（递归深度 = 最长键字节数 ≤约 600，栈安全；勿改显式栈——显式栈积压未访问兄弟，内存反而差）；Node/Trie 删拷贝
 - `removeRec` 递归方案：后序递归返回"节点是否变空"，父层负责 delete + 断链 + `--cnt_next`；head 是值成员永不删
-- `clear()`（2026-10-12 补）：删除 `head.next[256]` 的全部子树并复位 root 的 `is_word/cnt_next`；**当前实现未把 `head.next[i]` 置空，存在悬垂指针（§3.2-4）**
+- `clear()`（2026-10-12 补，2026-10-15 修复）：删除 `head.next[256]` 的全部子树并把指针置空、复位 root 的 `is_word/cnt_next`；注意循环下标用 `int`（`unsigned char` 配 `i < 256` 会回绕死循环，§19.2-11）
 - 口子现状（2026-10-06）：`insert` 已返回 bool（是否新插，服务同名幂等）✓；collect/size 未单独做——`queryTag` 用 `forEach` 边遍历边计数切片，等效实现且顺序即字典序
 - `operator[]` 的"自动建节点"语义只允许 insert 使用，query/remove 走判空分支（否则删不存在的词会凭空建节点）
 
@@ -418,7 +414,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 - **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + assert）。Heap 用例：容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应**编译失败**（禁拷贝生效的证明）。LinkedList：空表/头节点/不存在 id 边界
 - **db 可直接单测**：listItems 等 db 方法不依赖 HTTP 即可调用验证（分层红利）
-- **接口测试**：`tests/test.sh` 自包含回归（用 `tests/metrace.json` 起临时服务端，190 项：CRUD、过滤排序分页、标签、种子加载语义、加载校验失败矩阵（值域/旧枚举名/id/时间戳 → fail-fast 且不改写文件）、`type` 白名单四值与未分类边界）；旧 `test_api.sh` 已删除。**2026-10-15 复核：143 通过 / 47 失败（§3.2-1/2），修复后应回全绿；`POST /api/tags` 尚未覆盖、持久化失败路径无测试**
+- **接口测试**：`tests/test.sh` 自包含回归（用 `tests/metrace.json` 起临时服务端，210 项：CRUD、过滤排序分页、标签（含 `POST /api/tags` 契约与幂等）、种子加载语义、加载校验失败矩阵（值域/旧枚举名/id/时间戳 → fail-fast 且不改写文件）、`type` 白名单四值与未分类边界、落盘重启（写 → 杀进程 → 重启 → 读））；旧 `test_api.sh` 已删除。**2026-10-15 复核：210 项全绿**；持久化失败路径仍无测试（需构造不可写目录）
 - 压测（阶段 4）：1000 条下 listItems / recommend 响应时间
 
 ---
@@ -436,8 +432,8 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 - [x] Item：setter、toJson/fromJson 全字段、friend DataBase、touch()、fromCreateJson、int64 时间戳（2026-10-06）
 - [x] LinkedList：forEach / find（三重载）/ 谓词版 remove / getSize / clear；拷贝构造与赋值均已删；剩 `tests/test_linkedlist.cpp`
-- [x] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；接管全局标签表（§7.3）；clear 已补（待修悬垂指针，§3.2-4）
-- [x] DataBase：save 原子写；next_id 兜底 + Warning；load 值域/id/时间戳 fail-fast（2026-10-09）、原子化暂存 + 提交（2026-10-13）；`mutex` + `*Unlocked` 拆分完成；**剩修 §3.2-1/2/3 三个回归**
+- [x] Trie：next[256] + unsigned char + Node 递归析构 + 删拷贝；接管全局标签表（§7.3）；clear 已补（2026-10-12；指针置空与循环回绕 2026-10-15 修复）
+- [x] DataBase：save 原子写；next_id 兜底 + Warning；load 值域/id/时间戳 fail-fast（2026-10-09）、原子化暂存 + 提交（2026-10-13）；`mutex` + `*Unlocked` 拆分；幽灵过滤/saveUnlocked/缺文件 db_path 修复（2026-10-15）
 - [x] 验收：种子 20 条（data/metrace.json）load → query → save 链路走通
 
 ### 阶段 2：HTTP CRUD（10.6~10.9，进行中）
@@ -445,7 +441,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - [x] `ItemQuery/SortField/ItemQueryResult/TagQuery` 等落入 DataBase.h；`queryItem`（Top-N 堆，§9.4）/ getItem / updateItem / removeItem / createItem / `queryTag` 已实现（save 进锁内、`ItemResult`/`WriteStatus` 返回，2026-10-10）
 - [x] Router：/api/items 五路由 + GET /api/tags + 校验；写路径修复完成（POST/PUT 非抛解析、limit 契约截断、错误体统一，2026-10-06）；`type` 白名单已定为 `uncategorized`/`book`/`movie`/`music`（2026-10-08，不做创建/PUT 拆分）；POST /api/tags（body + 201）与 error/exception handler 完成、PUT/DELETE 状态码修正（2026-10-12）
 - [x] include 卫生：Router.h 前向声明（2026-10-09）、Router.cpp 自带 json、DataBase.h 补 `<cstddef>`、DataBase.cpp 补 `<filesystem>` 均已完成
-- [x] `tests/test.sh` 自包含回归（190 项，含未分类与加载校验矩阵）；2026-10-15 复核 143/47（§3.2），修复后应回全绿；旧 `test_api.sh` 已删除
+- [x] `tests/test.sh` 自包含回归 210 项全绿（2026-10-15，含 POST /api/tags 契约与"写 → 重启 → 读"落盘回归、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
 
 ### 阶段 3：算法功能（10.10~10.14，两人并行）
 
@@ -474,7 +470,7 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 
 ## 15. 验收标准与演示
 
-- 服务独立启动、全部接口可用、数据重启不丢；`tests/test.sh` 全绿（当前 143/190，待修 §3.2-1/2/3）
+- 服务独立启动、全部接口可用、数据重启不丢；`tests/test.sh` 全绿（210 项，2026-10-15）
 - 手写结构有**真实调用方**（对应表见 §9.6），能现场解释与复杂度分析
 - 推荐可演示；撤销/重做在客户端演示；服务端讲解顺序建议：链表节点 → 淘汰堆与全序比较器 → 散列表与扩容 → 推荐
 - 能回答两个高频追问："为什么查询逻辑在 db 不在 Router"（锁边界）；"为什么不用平衡树做排序索引"（过滤组合使索引失效 + 规模账：千条排序微秒级）
@@ -533,7 +529,7 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 8. **`vector(n)` 是填充构造不是预分配**：造出 n 个默认值且 size=n，push_back 追加在其后；预分配的拼写是 `reserve`。
 9. **const 成员函数里写成员 = 编译错误**（"must be a modifiable lvalue"）；需要"只读走 const、改值走非 const"时就提供双重载（LinkedList 的 find/forEach 模式）。
 10. **friend 必须全限定**：core 里写 `friend class DataBase;` 会声明一个不存在的 `core::DataBase`，权限开给空气且编译通过；正确写法 `friend class ::metrace::service::DataBase;` 配前置声明。限定名根前的 `::` 同理防作用域劫持。
-11. **类型选择三档**：`time_t` 宽度/符号/纪元都没钉（接口货币，只在 `time(nullptr)` 边界出现）；`long long` 只钉下限；`std::int64_t` 上下全钉（恰好是 nlohmann 整数底层类型）。**越靠序列化边界越要右边的**。`std::size_t` 的正房是 `<cstddef>`；size_t 与 int 比较触发 -Wsign-compare，零警告铁律下必须显式统一。
+11. **类型选择三档**：`time_t` 宽度/符号/纪元都没钉（接口货币，只在 `time(nullptr)` 边界出现）；`long long` 只钉下限；`std::int64_t` 上下全钉（恰好是 nlohmann 整数底层类型）。**越靠序列化边界越要右边的**。`std::size_t` 的正房是 `<cstddef>`；size_t 与 int 比较触发 -Wsign-compare，零警告铁律下必须显式统一。**`unsigned char` 是字节/下标的正当代数类型，但不能配 `i < 256` 当循环变量**——255+1 回绕成 0、条件恒真 → 死循环（2026-10-15 实弹于 `Trie::clear`/`forEachRec`；循环下标用 `int`，编译器会以 `-Wtype-limits` 预警）。
 12. **gmtime 返回静态缓冲区**（线程不安全，线程池下必须 `gmtime_r`）；本项目时间戳化后该问题类整体消失——**换表示消灭问题类，优于小心使用危险接口**。
 13. 对将死的局部值 `std::move`（SSO 内零收益但零成本，语义是"交接所有权"）；**const 对象 move 静默退化成拷贝**，无警告。
 14. 文件作用域助手函数用匿名 namespace 或 `static`（内部链接）；正则路由与内嵌 JSON 用原始字符串 `R"(...)"`。
@@ -549,8 +545,8 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 21. **存在性住类型不住值**：缺席用 optional / nullptr / optional 成员表达；只有域内天然有洞（空串不在值域）才可用哨兵；**给对象加 exists 标志 = 僵尸对象**（双真相、检查义务摊派给每个方法）。
 22. **ADT 与表示是两个维度**：队列只需"单链 + 尾指针"（双向买的是反向遍历/中间删除）；加任何结构前先问真实调用方（§9.6 只写不用不算数）。
 23. **幂等创建的 bool 语义**：createTag 的 true/false 不是成败，是"状态是否变化"——喂给"无变化不落盘（服务端）"与"不入撤销栈（客户端）"两个决策。
-24. **无锁实现（`*Unlocked`）要同步全部调用点**：加"公有壳 + 无锁芯"时最容易漏的是芯里又调回公有壳——`createItem` 持锁调 `save()`（加锁壳）= 二次加锁复发，CRUD 全体挂起（2026-10-13 实弹，§3.2-2）。判据：**"加锁"这个动作只允许出现在公有入口那一层文本里**。
-25. **权威副本搬家时要连带改引用**：把成员数据搬进暂存区（`StagedData`）后，所有校验/过滤引用必须改指暂存区；漏一处（幽灵过滤仍查成员 `tags`）就会静默丢数据（2026-10-13 实弹，§3.2-1）。重构数据流时逐处问："现在权威的是哪一份？"
+24. **无锁实现（`*Unlocked`）要同步全部调用点**：加"公有壳 + 无锁芯"时最容易漏的是芯里又调回公有壳——`createItem` 持锁调 `save()`（加锁壳）= 二次加锁复发，CRUD 全体挂起（e3dd678 实弹，2026-10-15 已修）。判据：**"加锁"这个动作只允许出现在公有入口那一层文本里**。
+25. **权威副本搬家时要连带改引用**：把成员数据搬进暂存区（`StagedData`）后，所有校验/过滤引用必须改指暂存区；漏一处（幽灵过滤仍查成员 `tags`）就会静默丢数据（e3dd678 实弹，2026-10-15 已修）。重构数据流时逐处问："现在权威的是哪一份？"
 
 ### 19.4 调试方法
 
