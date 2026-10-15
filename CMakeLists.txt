@@ -97,16 +97,21 @@ endif()
 
 # ---------- 测试 ----------
 # 结构单测：普通 main + 轻量断言助手（与 server 同标准，目标零警告）
-add_executable(test_hashtable tests/test_hashtable.cpp)
-target_include_directories(test_hashtable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-if(MSVC)
-    target_compile_options(test_hashtable PRIVATE /W4 /permissive- /utf-8)
-else()
-    target_compile_options(test_hashtable PRIVATE -Wall -Wextra -Wpedantic)
-endif()
-
 enable_testing()
-add_test(NAME test_hashtable COMMAND test_hashtable)
+foreach(test_name test_hashtable test_recommender)
+    add_executable(${test_name} tests/${test_name}.cpp)
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(MSVC)
+        target_compile_options(${test_name} PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(${test_name} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endforeach()
+
+# 涉及 Item 的单测需要 Item 的实现与 nlohmann 头文件路径
+target_sources(test_recommender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Item.cpp)
+target_link_libraries(test_recommender PRIVATE nlohmann_json::nlohmann_json)
 
 # ---------- 安装 / 打包 ----------
 include(GNUInstallDirs)
