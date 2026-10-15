@@ -48,6 +48,7 @@
 - [x] `Trie`：**已接管全局标签表（§7.3）**——insert 返回是否新插 / find / forEach（0..255 字节序 DFS ⇒ 输出即字典序）/ remove（递归清空链）/ **clear（2026-10-12；2026-10-15 修复"指针置空"与循环下标回绕）**；`next[256]`、`unsigned char`、Node 递归析构、删拷贝
 - [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化；未分类取值由 `"null"` 改名为 `"uncategorized"`（2026-10-08，白名单即 `kItemTypeName[4]`）
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删；**容量为 0 抛 `std::invalid_argument`（2026-10-09 补）**
+- [x] `HashTable`（2026-10-15 实现并接入）：链地址法 + 除法散列 + 素数桶（17 起步、约 2x 扩容）+ 负载因子 0.75 重挂；**不拥有值**（存 `Item*`）；id → `Item*` 索引接入 `getItem/updateItem/removeItem/createItem` 与 `load/clear`，与链表同锁同步（§9.5）；单测 `tests/test_hashtable.cpp`
 - [x] `DataBase`：
   - 锁：`mutex` + "公有入口加锁、私有 `*Unlocked` 实现"拆分（2026-10-13）；写方法统一调 `saveUnlocked`（2026-10-15）
   - `load`：**暂存 + 提交两段式**——全部解析/校验进暂存区 `StagedData`（vector<Item> + vector<Tag> + next_id），成功后 `clearUnlocked()` + 逐条复制装入；失败不触碰现状（2026-10-13）；幽灵过滤查暂存表、缺文件分支清空并设 `db_path`（2026-10-15 修复）
@@ -63,8 +64,8 @@
 ### 3.2 待办（按优先级，2026-10-15 核对；旧缺陷 1~4 与测试缺口均已清）
 
 1. `offset` 解析在 long long→size_t 收窄前补上限检查（§8.3）；
-2. `tests/test_<结构>.cpp` 结构单测（§12）——`Trie::clear` 悬垂/循环回绕这类缺陷 HTTP 回归够不到，需要结构单测直接覆盖；
-3. HashTable 接入 getItem/update/remove（§9.5）；Recommender + `/api/recommend`（§8.5）；可选 `/api/search`、`/api/stats`；
+2. 其余结构的 `tests/test_<结构>.cpp`（LinkedList/Trie/Heap；HashTable 已交）——`Trie::clear` 悬垂/循环回绕这类缺陷 HTTP 回归够不到，需要结构单测直接覆盖；
+3. Recommender + `/api/recommend`（§8.5）；可选 `/api/search`、`/api/stats`；
 4. 50~100 条演示数据、1000 条压测（阶段 4）。
 
 > 修复记录：2026-10-06 审查的写路径问题（updateItem 的 touch/registerTags、POST 非抛解析/必填闸门/类型谓词、tags 与 score 校验、错误体统一）已修；同日晚二次修复 PUT 解析/limit 截断/拷贝赋值/text-plain。GET /api/tags 响应键已拍板以代码为准（`tags`），契约回改见 §8.2。~~`getCreatedAt()` 返回 `time_t` 与 int64_t 存储不一致~~（已统一为 `std::int64_t`，过时划去）。
@@ -104,22 +105,23 @@ MeTrace-Server/
 │   │   ├── LinkedList.h         # ✓ insert/remove(值+谓词)/forEach/find(三重载)/getSize/clear；三法则齐
 │   │   ├── Trie.h               # ✓ 标签表本体：insert(bool)/find/forEach(字典序)/remove/clear
 │   │   ├── Heap.h               # ✓ 固定容量堆（Top-N 淘汰语义）+ 容量 0 抛异常
-│   │   ├── HashTable.h          # ○ 空壳：id → Item* 索引（§9.5，服务端第四个核心结构）
+│   │   ├── HashTable.h          # ✓ 链地址法 + 素数扩容；不拥有值（§9.5）
 │   │   └── Recommender.h        # ○ 未开始（文件尚未创建）
 │   ├── service/
-│   │   └── DataBase.h           # ✓ 锁 + `*Unlocked`（load/save/clear）+ clear 齐
+│   │   └── DataBase.h           # ✓ 锁 + `*Unlocked`（load/save/clear）+ clear + id 索引（HashTable）齐
 │   └── http/
 │       └── Router.h             # ✓ 仅两条前向声明（2026-10-09）
 ├── src/                         # 与 include/ 一一对应 + main.cpp
 │   ├── main.cpp                 # ✓ 参数解析 + load fail-fast
 │   ├── core/{Item,Trie}.cpp     # ✓
-│   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘齐（2026-10-15 复核）
+│   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘齐 + id 索引同锁同步（2026-10-15 复核）
 │   └── http/Router.cpp          # ✓ 七路由（含 POST /api/tags）+ 校验 + error/exception handler
 ├── scripts/{build.sh,run.sh}
 ├── tests/
 │   ├── test.sh                  # ✓ 自包含回归（curl + jq，210 项；2026-10-15 全绿）
 │   ├── metrace.json             # ✓ 测试种子数据（21 条，含 1 条 uncategorized）
-│   └── test_<结构>.cpp          # 计划：简单 assert 程序
+│   ├── test_hashtable.cpp       # ✓ HashTable 结构单测（ctest）
+│   └── test_<结构>.cpp          # 计划：LinkedList/Trie/Heap 单测
 └── data/metrace.json            # 运行时种子 20 条（已 gitignore）
 ```
 
@@ -355,19 +357,20 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **容量 = min(offset+limit, items.size())**：offset 无上界，防恶意参数巨额分配
 - 高分榜（recommend 冷启动）复用 Heap，comp 方向取正即可
 
-### 9.5 HashTable（阶段 3 实施，服务端第四个核心结构；`template<typename V>` 键固定 int）
+### 9.5 HashTable（已实现并接入，2026-10-15；`template<typename V>` 键固定 int）
 
-- 链地址法：桶为 Entry 单链表；除法散列 `key % 桶数`（桶数取素数，初始 17）；负载因子 >0.75 → rehash 到约两倍素数（**摘下重挂**，不是复制后删）
-- 接口：`V* find(int)` / `void insert(int, V)`（已存在则覆盖）/ `bool erase(int)` / `size()`
-- **不拥有值**：析构逐桶 delete Entry 但绝不 delete 值；存的是 `Item*`（指向链表节点内的 data）——存拷贝无用（PUT 会改到副本），存 Node* 不可能（private 类型）
-- 与链表同步在 DataBase 锁内：插入同挂、删除同摘；漏同步 = 悬垂指针
-- 落地策略：先写 O(n) 链表版 CRUD 跑通 HTTP，HashTable 作为**内部加速器**后接入（`getItem`/`updateItem`/`removeItem` 优先，§9.6），对外签名不变，`tests/test.sh` 全绿作回归验证
+- 链地址法：桶为 Entry 单链表；除法散列 `key % 桶数`（素数表 17 起步、约 2 倍递增；到最后一档不再扩容）；负载因子 >0.75 → rehash（**摘下重挂**，零额外分配；新桶数组先分配好，分配失败时旧表完好）
+- 接口（`include/core/HashTable.h`）：`V* find(int) const` / `void insert(int, const V&)`（键已存在则覆盖）/ `bool erase(int)` / `void clear()` / `getSize()`；拷贝构造与赋值已删（三法则）
+- **不拥有值**：析构逐桶 delete Entry 但绝不 delete 值；存的是 `Item*`（指向链表节点内的 data，节点地址稳定）——存拷贝无用（PUT 会改到副本），存 Node* 不可能（private 类型）
+- **接入点与同步不变量**（`DataBase` 单锁内，"条目 id ⇔ 索引项"）：`createItem` 插入后挂索引（落盘失败回滚时同步 `erase`）、`removeItem` 先查索引 → 摘链表 → `erase`、`getItem`/`updateItem` 直接走索引（平均 O(1)）、`loadUnlocked` 提交流程重建索引、`clearUnlocked` 清空索引；`queryItem` 仍全扫（过滤组合使索引失效，§15）
+- 收益与边界：单查/改/删的**查找**变 O(1)（但每次写仍全量 save O(n)，写路径渐进复杂度不变）；`find` 返回的指针只在锁内有效（§5.2）
+- 测试：`tests/test_hashtable.cpp`（基本 / 同桶冲突 / 跨扩容 / clear / 非拥有值 / 禁拷贝 `static_assert`）＋ `tests/test.sh` 210 项全绿作回归
 
 ### 9.6 结构 → 真实调用方对应表（答辩必问）
 
-服务端手写数据结构为 **LinkedList / Trie / Heap / HashTable 四个**（HashTable 待实施，§9.5），另加 **Recommender** 算法；**撤销/重做的双栈在客户端 GUI**（§8.4），不计入服务端结构账。
+服务端手写数据结构为 **LinkedList / Trie / Heap / HashTable 四个**（均已实现并接入），另加 **Recommender** 算法（计划）；**撤销/重做的双栈在客户端 GUI**（§8.4），不计入服务端结构账。
 
-`LinkedList` → 全部 CRUD（主存储）；`Trie` → 全局标签表（createTag 查重 / GET /api/tags / save 收集）；`Heap` → listItems 的 Top-N 与 recommend 冷启动高分榜；`HashTable` → getItem / updateItem / removeItem 的 id 索引（§9.5）；`Recommender` → recommend（规格见 §8.5）。**只写不用的结构不算数**。
+`LinkedList` → 全部 CRUD（主存储）；`Trie` → 全局标签表（createTag 查重 / GET /api/tags / save 收集）；`Heap` → listItems 的 Top-N 与 recommend 冷启动高分榜；`HashTable` → getItem / updateItem / removeItem / createItem 的 id 索引（§9.5）；`Recommender` → recommend（规格见 §8.5）。**只写不用的结构不算数**。
 
 ---
 
@@ -402,6 +405,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 ./scripts/run.sh                          # 127.0.0.1:8000 + ./data/metrace.json
 ./scripts/run.sh --port 9000 --db /tmp/demo.json
 ./tests/test.sh                           # 自包含回归：自动起停临时服务端（curl + jq）
+ctest --test-dir build --output-on-failure  # 结构单测（tests/test_hashtable.cpp 等）
 ```
 
 - CMake：GLOB_RECURSE 收集 `src/*.cpp`（CONFIGURE_DEPENDS，新增文件免改构建；Makefile/Ninja 生成器下生效）；`-Wall -Wextra -Wpedantic`，**目标零警告**；Release 下 LTO
@@ -412,7 +416,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 ## 12. 测试策略
 
-- **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + assert）。Heap 用例：容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应**编译失败**（禁拷贝生效的证明）。LinkedList：空表/头节点/不存在 id 边界
+- **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + 轻量断言助手；不依赖 `assert`，Release/NDEBUG 下同样有效），CMake 各挂目标并注册 `ctest`。已就位：`tests/test_hashtable.cpp`（基本 / 冲突 / 扩容 / clear / 非拥有值 / 禁拷贝）。计划中：Heap（容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应编译失败）、LinkedList、Trie（clear 置空与循环边界）
 - **db 可直接单测**：listItems 等 db 方法不依赖 HTTP 即可调用验证（分层红利）
 - **接口测试**：`tests/test.sh` 自包含回归（用 `tests/metrace.json` 起临时服务端，210 项：CRUD、过滤排序分页、标签（含 `POST /api/tags` 契约与幂等）、种子加载语义、加载校验失败矩阵（值域/旧枚举名/id/时间戳 → fail-fast 且不改写文件）、`type` 白名单四值与未分类边界、落盘重启（写 → 杀进程 → 重启 → 读））；旧 `test_api.sh` 已删除。**2026-10-15 复核：210 项全绿**；持久化失败路径仍无测试（需构造不可写目录）
 - 压测（阶段 4）：1000 条下 listItems / recommend 响应时间
@@ -445,9 +449,9 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 
 ### 阶段 3：算法功能（10.10~10.14，两人并行）
 
-- [ ] A 线：HashTable（`template<typename V>`，id → `Item*`）接入 getItem/updateItem/removeItem；结构与链表同锁增删（§9.5）
+- [x] A 线：HashTable（`template<typename V>`，id → `Item*`）实现并接入 getItem/updateItem/removeItem/createItem/load/clear；结构与链表同锁增删（2026-10-15，§9.5）
 - [ ] B 线：Recommender（相似 + 高分榜复用 Heap）+ `/api/recommend`；可选 Trie + `/api/search`
-- [ ] 各自 `tests/test_*.cpp`；能指着代码讲结构与复杂度
+- [ ] B 线 `tests/test_*.cpp`（A 线已交 `tests/test_hashtable.cpp`）；能指着代码讲结构与复杂度
 - [x] 撤销/重做改由客户端 GUI 实现，服务端不再规划 `UndoStack` 与 `/api/undo`、`/api/redo`（2026-10-08 定，§8.4）
 
 ### 阶段 4：完善与验收（10.15~10.18）
