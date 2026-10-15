@@ -94,6 +94,8 @@ bool DataBase::loadUnlocked(const std::string& dbPath)
     if (!file.is_open()) {
         if (!std::filesystem::exists(dbPath)) {
             std::cerr << "[DataBase] Warning: Database file doesn't exist, starting from empty." << std::endl;
+            clearUnlocked();
+            db_path = dbPath;
             return true;
         }
         std::cerr << "[DataBase] Fatal: Can't open database file." << std::endl;
@@ -138,7 +140,7 @@ bool DataBase::loadUnlocked(const std::string& dbPath)
             // 标签过滤放在校验之后
             std::vector<metrace::core::Tag> kept_tags;
             for (const auto& tag : item.getTags()) {
-                if (!tags.find(tag)) {
+                if (std::find(staged.tags.begin(), staged.tags.end(), tag) == staged.tags.end()) {
                     std::cerr << "[DataBase] Warning: Tag " << tag << " in item " << item.getId()
                         << " not found in database, discarded." << std::endl;
                 }
@@ -269,7 +271,7 @@ const ItemResult metrace::service::DataBase::updateItem(int id, const metrace::s
     item->touch();
     registerTags(item->getTags());
 
-    if (!save(db_path)) {
+    if (!saveUnlocked(db_path)) {
         *item = before;
         return {WriteStatus::PersistFailed, nullptr};
     }
@@ -285,7 +287,7 @@ WriteStatus metrace::service::DataBase::removeItem(int id)
     std::lock_guard<std::mutex> lock(mtx);
     bool ans = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
     if (!ans) return WriteStatus::NotFound;
-    if (!save(db_path)) return WriteStatus::PersistFailed;
+    if (!saveUnlocked(db_path)) return WriteStatus::PersistFailed;
     return WriteStatus::Ok;
 }
 
@@ -302,7 +304,7 @@ const ItemResult DataBase::createItem(metrace::core::Item item)
     registerTags(item.tags);
     const metrace::core::Item* res = items.insert(item);
 
-    if (!save(db_path)) {
+    if (!saveUnlocked(db_path)) {
         items.remove(item);
         return {WriteStatus::PersistFailed, nullptr};
     }
@@ -317,7 +319,7 @@ WriteStatus DataBase::createTag(const metrace::core::Tag& tag)
     std::lock_guard<std::mutex> lock(mtx);
     bool res = tags.insert(tag);
     
-    if (!res || save(db_path)) return WriteStatus::Ok;
+    if (!res || saveUnlocked(db_path)) return WriteStatus::Ok;
     return WriteStatus::PersistFailed;
 }
 

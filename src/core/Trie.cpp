@@ -4,7 +4,10 @@ namespace metrace::core {
 
 void Trie::clear()
 {
-    for (Node* p : head.next) delete p; // 递归析构
+    for (unsigned char c = 0; c < 256; ++c) {
+        delete head.next[c];
+        head.next[c] = nullptr;
+    }
     head.cnt_next = 0;
     head.is_word = false;
 }
@@ -36,7 +39,7 @@ void Trie::forEachRec(const Node* cur, std::string& prefix, const std::function<
     if (cur->is_word) {
         func(prefix);
     }
-    for (int i = 0; i < 256; ++i) {
+    for (unsigned char i = 0; i < 256; ++i) {
         if (cur->next[i] != nullptr) {
             prefix.push_back(char(i));
             forEachRec(cur->next[i], prefix, func);
