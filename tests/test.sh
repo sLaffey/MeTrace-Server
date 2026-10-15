@@ -11,6 +11,8 @@
 #   GET  /api/tags            标签表有序枚举
 #   POST /api/tags            新增标签（body 契约、同名幂等、长度边界）
 #   GET  /api/recommend       相似推荐（冷启动评分榜 / 指定目标）
+#   GET  /api/search          标题前缀搜索（与列表同构 + 必填 q）
+#   GET  /api/stats           统计聚合（total / by_type / score_dist）
 # 同时覆盖 DataBase::load 的种子加载语义（幽灵标签丢弃、tags 排序去重）与
 # 启动行为（文件不存在按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动、不改写文件），
 # 以及 type 白名单（含 uncategorized）在查询 / 创建 / 更新 / 加载四个入口的一致性。
@@ -462,6 +464,56 @@ checkjq 'item_id=1 全量 20 条（不含自身）' 20 '.items | length' "$RESP_
 
 api_get '/api/recommend?item_id=1&topN=0'
 checkjq 'item_id=1 且 topN=0 截断为 1 条' 1 '.items | length' "$RESP_BODY"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "== 标题搜索与统计（GET /api/search、GET /api/stats）=="
+# ---------------------------------------------------------------------------
+check 'search 缺 q 返回 400' 400 "$(status_get '/api/search')"
+check 'search q 为空返回 400' 400 "$(status_get '/api/search?q=')"
+check 'search 非法 type 返回 400' 400 "$(status_get '/api/search?q=a&type=game')"
+check 'search 非法 sort 返回 400' 400 "$(status_get '/api/search?q=a&sort=unknown')"
+check 'stats 非法 type 返回 400' 400 "$(status_get '/api/stats?type=game')"
+check 'stats 空 type 视同未提供（200）' 200 "$(status_get '/api/stats?type=')"
+
+api_get '/api/stats'
+checkjq 'stats 返回 total/by_type/score_dist' true \
+    '(.total | type) == "number" and (.by_type | type) == "object" and (.score_dist | type) == "object"' "$RESP_BODY"
+checkjq 'stats 评分分布求和等于 total' true '([.score_dist[]] | add) == .total' "$RESP_BODY"
+
+if [[ "$SEED_MODE" -eq 1 ]]; then
+api_get '/api/search?q=三体'
+checkjq 'search q=三体 命中 1 条' 1 '.total' "$RESP_BODY"
+checkjqc 'search 结果为 id=1 的三体' '[1]' '[.items[].id]' "$RESP_BODY"
+
+api_get '/api/search?q=三'
+checkjq 'search 前缀匹配（q=三 命中三体）' 1 '.total' "$RESP_BODY"
+
+api_get '/api/search?q=zzz'
+checkjq 'search 无命中返回空集' 0 '.total' "$RESP_BODY"
+checkjqc 'search 无命中 items 为空数组' '[]' '.items' "$RESP_BODY"
+
+api_get '/api/search?q=三体&type=movie'
+checkjq 'search 可与 type 组合过滤' 0 '.total' "$RESP_BODY"
+
+api_get '/api/search?q=三体&sort=title&limit=100'
+check 'search 支持与列表同构的 sort/limit（200）' 200 "$RESP_STATUS"
+
+api_get '/api/stats'
+checkjq 'stats 全库 total = 21' 21 '.total' "$RESP_BODY"
+checkjqc 'stats by_type 全库分布' '{"book":8,"movie":7,"music":5,"uncategorized":1}' '.by_type' "$RESP_BODY"
+checkjq 'stats 未评分桶 = 4' 4 '.score_dist["0"]' "$RESP_BODY"
+checkjq 'stats 81-90 桶 = 9' 9 '.score_dist["81-90"]' "$RESP_BODY"
+checkjq 'stats 91-100 桶 = 6' 6 '.score_dist["91-100"]' "$RESP_BODY"
+
+api_get '/api/stats?type=book'
+checkjq 'stats type=book total = 8' 8 '.total' "$RESP_BODY"
+checkjq 'stats type=book 分布求和 = 8' true '([.score_dist[]] | add) == .total' "$RESP_BODY"
+checkjq 'stats by_type 不受 type 过滤影响' true '.by_type.book == 8 and .by_type.movie == 7' "$RESP_BODY"
+
+api_get '/api/stats?type=music'
+checkjq 'stats type=music total = 5' 5 '.total' "$RESP_BODY"
 fi
 
 # ---------------------------------------------------------------------------

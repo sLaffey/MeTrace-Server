@@ -269,6 +269,39 @@ static std::optional<metrace::service::RecommendQuery> parseRecommendQuery(const
     return q;
 }
 
+/// @brief /api/search 的解析：与列表同构（type/tag/sort/limit/offset），另加必填非空 q（标题前缀）
+static std::optional<metrace::service::ItemQuery> parseSearchQuery(const httplib::Request& req)
+{
+    std::optional<metrace::service::ItemQuery> q = parseItemQuery(req);
+    if (!q.has_value()) {
+        return std::nullopt;
+    }
+    if (!req.has_param("q")) {
+        return std::nullopt;
+    }
+    const std::string& keyword = req.get_param_value("q");
+    if (keyword.empty()) {
+        return std::nullopt;
+    }
+    q->keyword = keyword;
+    return q;
+}
+
+static std::optional<metrace::service::StatsQuery> parseStatsQuery(const httplib::Request& req)
+{
+    metrace::service::StatsQuery q;
+    if (req.has_param("type")) {
+        const std::string& v = req.get_param_value("type");
+        if (!v.empty()) { // 空值视同未提供
+            if (!metrace::core::checkType(v)) {
+                return std::nullopt;
+            }
+            q.type = v;
+        }
+    }
+    return q;
+}
+
 static std::string errorBody(const std::string& msg)
 {
     nlohmann::json j;
@@ -519,6 +552,50 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
         out["items"] = nlohmann::json::array();
         for (const metrace::core::Item* item : ans.value()) {
             out["items"].push_back(item->toJson());
+        }
+        res.set_content(out.dump(), kJsonType);
+        return;
+    });
+
+    // GET /api/search 标题前缀搜索；过滤/排序/分页与列表同构，q 必填
+    server.Get("/api/search", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::optional<metrace::service::ItemQuery> parsed = parseSearchQuery(req);
+        if (!parsed.has_value()) {
+            res.status = 400;
+            res.set_content(errorBody("Invalid query parameters"), kJsonType);
+            return;
+        }
+
+        const metrace::service::ItemQueryResult ans = db.queryItem(parsed.value());
+        nlohmann::json out;
+        out["total"] = ans.total;
+        out["items"] = nlohmann::json::array();
+        for (const metrace::core::Item* it : ans.items) {
+            out["items"].push_back(it->toJson());
+        }
+        res.set_content(out.dump(), kJsonType);
+        return;
+    });
+
+    // GET /api/stats 统计聚合；type 可选（过滤 total/score_dist，by_type 始终为全库计数）
+    server.Get("/api/stats", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::optional<metrace::service::StatsQuery> parsed = parseStatsQuery(req);
+        if (!parsed.has_value()) {
+            res.status = 400;
+            res.set_content(errorBody("Invalid query parameters"), kJsonType);
+            return;
+        }
+
+        const metrace::service::StatsResult ans = db.stats(parsed.value());
+        nlohmann::json out;
+        out["total"] = ans.total;
+        out["by_type"] = nlohmann::json::object();
+        for (const auto& [name, count] : ans.by_type) {
+            out["by_type"][name] = count;
+        }
+        out["score_dist"] = nlohmann::json::object();
+        for (const auto& [label, count] : ans.score_dist) {
+            out["score_dist"][label] = count;
         }
         res.set_content(out.dump(), kJsonType);
         return;

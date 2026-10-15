@@ -1,6 +1,8 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <map>
+#include <string>
 #include <vector>
 #include <unordered_set>
 #include <mutex>
@@ -375,6 +377,10 @@ const ItemQueryResult DataBase::queryItem(const metrace::service::ItemQuery& que
         if (query.tag.has_value() && !item.hasTag(query.tag.value())) {
             return;
         }
+        if (query.keyword.has_value() &&
+            item.getTitle().compare(0, query.keyword->size(), query.keyword.value()) != 0) {
+            return;
+        }
         ++total;
         heap.push(&item);
     });
@@ -435,6 +441,41 @@ std::optional<std::vector<const metrace::core::Item*>> DataBase::recommend(const
     });
 
     return metrace::core::recommendTopN(candidates, target, query.top_n);
+}
+
+/// @brief 统计聚合：total（受 type 过滤）/ by_type（全库，按名有序）/ score_dist（受 type 过滤）
+/// @param query type 缺省 = 全库
+/// @note 单趟扫描 O(n)；评分桶：0、1-10、11-20、…、91-100（未评分 0 独立成桶）
+const StatsResult DataBase::stats(const StatsQuery& query) const
+{
+    std::lock_guard<std::mutex> lock(mtx);
+
+    static const std::string kDistLabels[11] = {
+        "0", "1-10", "11-20", "21-30", "31-40", "41-50",
+        "51-60", "61-70", "71-80", "81-90", "91-100"
+    };
+
+    StatsResult res;
+    std::size_t dist[11] = {0};
+    std::map<std::string, std::size_t> by_type;
+
+    items.forEach([&](const metrace::core::Item& item) {
+        ++by_type[item.getType()];
+        if (query.type.has_value() && item.getType() != query.type.value()) {
+            return;
+        }
+        ++res.total;
+        const int score = item.getScore();
+        const std::size_t bucket = score == 0 ? 0 : static_cast<std::size_t>((score - 1) / 10 + 1);
+        ++dist[bucket];
+    });
+
+    res.by_type.assign(by_type.begin(), by_type.end());
+    res.score_dist.reserve(11);
+    for (std::size_t i = 0; i < 11; ++i) {
+        res.score_dist.emplace_back(kDistLabels[i], dist[i]);
+    }
+    return res;
 }
 
 } // namespace metrace::service

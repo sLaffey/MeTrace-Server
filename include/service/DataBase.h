@@ -4,6 +4,7 @@
 #include <string>
 #include <optional>
 #include <mutex>
+#include <utility>
 #include <cstddef>
 
 #include "core/LinkedList.h"
@@ -24,6 +25,7 @@ enum class SortField {
 struct ItemQuery {
     std::optional<std::string> type;
     std::optional<metrace::core::Tag> tag;
+    std::optional<std::string> keyword; ///< 标题前缀过滤（/api/search 用），缺省不过滤
     SortField sort_field = SortField::CreatedAt;
     bool descending = true;
     std::size_t limit = 20;
@@ -48,6 +50,16 @@ struct TagQueryResult {
 struct RecommendQuery {
     std::optional<int> item_id; ///< 缺省 = 冷启动（全局评分榜）
     std::size_t top_n = 10;     ///< Router 已按契约截断到 [1,50]
+};
+
+struct StatsQuery {
+    std::optional<std::string> type; ///< 缺省 = 全库
+};
+
+struct StatsResult {
+    std::size_t total = 0;                                       ///< 应用 type 过滤后的总数
+    std::vector<std::pair<std::string, std::size_t>> by_type;    ///< 全库各类型计数（按名有序；仅含出现过的类型）
+    std::vector<std::pair<std::string, std::size_t>> score_dist; ///< 过滤后的评分分布（桶：0,1-10,…,91-100）
 };
 
 struct ItemPatch {
@@ -114,6 +126,9 @@ public:
     /// @brief 相似推荐（§8.5）
     /// @return nullopt = item_id 指定但不存在；空 vector = 合法空结果（空库 / 只有自身）
     std::optional<std::vector<const metrace::core::Item*>> recommend(const RecommendQuery& query) const;
+
+    /// @brief 统计聚合：total/by_type/score_dist（§8.2）
+    const StatsResult stats(const StatsQuery& query) const;
 };
 
 } // namespace metrace::service

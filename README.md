@@ -31,6 +31,7 @@
 - 标签系统：打标签时自动创建不存在的标签，条目与标签多对多关联
 - 组合过滤 + 排序 + 分页：按类型、标签筛选，按评分 / 日期 / 创建时间 / 标题排序；排序取 Top-N 采用手写淘汰堆，O(n log k)
 - 完整的参数校验与语义化状态码（400 / 404 / 500）
+- 标题前缀搜索（`/api/search`）与统计聚合（`/api/stats`：总数 / 类型分布 / 评分分布）
 - 手写数据结构承担主要业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表、**哈希表**（id 索引，链地址法 + 素数桶扩容）加速单查 / 改 / 删、**推荐算法**（扫描打分 + 淘汰堆 TopN）提供相似推荐
 - 撤销/重做归客户端：服务端不设 `/api/undo`、`/api/redo`，只保证写请求原子并回传完整 after 态，供客户端双栈回放
 - 原子落盘：写操作先写临时文件再 rename，中途崩溃不会损坏数据文件
@@ -120,13 +121,17 @@ curl -X POST http://127.0.0.1:8000/api/tags \
 # 和《三体》相似的条目（item_id 缺省时返回全局高分榜）
 curl 'http://127.0.0.1:8000/api/recommend?item_id=1&topN=5'
 
+# 标题前缀搜索与统计
+curl 'http://127.0.0.1:8000/api/search?q=三体'
+curl 'http://127.0.0.1:8000/api/stats?type=book'
+
 # 删除
 curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 ```
 
 ### 接口测试
 
-`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）、`POST /api/tags` 契约与启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 225 项断言（含相似推荐与"写 → 重启 → 读"落盘回归），2026-10-15 复核全绿。
+`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）、`POST /api/tags`、推荐、搜索与统计，以及启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 249 项断言（含"写 → 重启 → 读"落盘回归），2026-10-15 复核全绿。
 
 ```bash
 ./tests/test.sh                                 # 依赖 curl 与 jq
@@ -134,7 +139,7 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 ./tests/test.sh --server ./build/bin/server --port 18000
 ```
 
-结构单测：`cmake --build build && ctest --test-dir build --output-on-failure`（当前：HashTable、Recommender；其余计划中）。
+结构单测：`cmake --build build && ctest --test-dir build --output-on-failure`（7 个目标：LinkedList / Trie / Heap / HashTable / Recommender / Item / DataBase）。
 
 ---
 
@@ -200,10 +205,10 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}` |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{"name":"科幻"}` |
 | GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
+| GET | `/api/search` | 标题前缀搜索 | `?q=&type=&sort=&limit=&offset=` | `{"total":N,"items":[Item,...]}` |
+| GET | `/api/stats` | 统计聚合 | `?type=` | `{"total":N,"by_type":{...},"score_dist":{...}}` |
 
 > **撤销/重做不在服务端**：双栈由客户端 GUI 实现，服务端不提供对应接口；客户端回放所需的契约（完整 after 态、DELETE 无 body、只读 id）见下文「撤销/重做（客户端实现）」小节。
->
-> 计划中：`/api/search`（前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
 
 ### 查询参数
 
@@ -216,8 +221,9 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | `offset` | ≥ 0 | 默认 0 |
 | `item_id` | 条目 id | `/api/recommend` 缺省时返回全局高分榜（冷启动兜底） |
 | `topN` | 正整数，默认 10，上限 50 | 推荐条数 |
+| `q` | 非空字符串 | 仅 `/api/search`：必填，标题前缀匹配（按字节比较） |
 
-取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit` 数值越界静默截断到 1~100，`offset` 为负返回 400；相似推荐里 `item_id` 指向不存在的条目返回 404，`topN` 非数字返回 400、数值越界静默截断到 1~50。
+取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit` 数值越界静默截断到 1~100，`offset` 为负返回 400；相似推荐里 `item_id` 指向不存在的条目返回 404，`topN` 非数字返回 400、数值越界静默截断到 1~50；`/api/search` 的 `q` 必填非空、标题前缀匹配；`/api/stats` 的 `type` 缺省为全库（`by_type` 恒为全库分布，`total` 与 `score_dist` 受 `type` 过滤，分布桶为 `0`/`1-10`/…/`91-100`）。
 
 ### 数据模型
 
@@ -333,7 +339,7 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
 - 撤销 PUT 时旧值需由客户端自行快照（PUT 是部分更新，只回传 after 态）；
 - 撤销"新增条目" = 发 DELETE，条目引用的标签仍留在全局标签表（孤儿标签是可接受的简化），标签没有删除接口。
 
-**GET /api/recommend?item_id=1&topN=5（计划中，尚未实现）**
+**GET /api/recommend?item_id=1&topN=5**
 
 返回与指定条目最相似的 TopN 条目（不含自身）。相似度 = `3 × 共同标签数 + 2 × 同作者 + 1 × 同类型`，同分时评分高者优先。`item_id` 缺省时返回全局高分榜。
 
@@ -438,7 +444,7 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] load 值域校验（`type` 白名单、title/score/progress/tags、id 唯一性、时间戳）：fail-fast、不做迁移，已实现（2026-10-09）
 - [x] Item 序列化全字段与服务端字段口子（id/时间戳自动管理）；LinkedList 遍历/查找/计数/clear
 - [x] 互斥锁、写操作锁内落盘、`load` 原子化（暂存 + 提交）（2026-10-10~13）
-- [x] 修复加载丢标签、写路径二次加锁、缺文件未设 `db_path`；Trie `clear` 置空与循环回绕修复；`tests/test.sh` 扩到 225 项全绿（2026-10-15）
+- [x] 修复加载丢标签、写路径二次加锁、缺文件未设 `db_path`；Trie `clear` 置空与循环回绕修复；`tests/test.sh` 扩到 249 项全绿（2026-10-15）
 
 ### 阶段 2：HTTP CRUD（进行中）
 
@@ -447,13 +453,13 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] `type` 白名单定为 `uncategorized`（未分类）/`book`/`movie`/`music`，未分类可显式创建；POST 的 `type` 必填（2026-10-08）
 - [x] PUT body 解析修复、`limit` 契约截断 1~100（`limit=0` 曾致服务崩溃）、`/` 回 text/plain
 - [x] POST `/api/tags`（body `{"name":...}` + 201）与 error/exception handler、PUT/DELETE 状态码修正（2026-10-12）
-- [x] `tests/test.sh` 自包含回归 225 项全绿（2026-10-15，含 POST /api/tags 契约、相似推荐与落盘重启、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
+- [x] `tests/test.sh` 自包含回归 249 项全绿（2026-10-15，含 POST /api/tags 契约、相似推荐、搜索与统计、落盘重启、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
 
 ### 阶段 3：HashTable 索引与推荐（10.10~10.14）
 
 - [x] `HashTable`（id → `Item*` 索引）实现并接入单查 / 改 / 删（2026-10-15）
 - [x] `Recommender` + `/api/recommend`（相似 TopN + 冷启动评分榜，2026-10-15）
-- [ ] 可选：`/api/search`、`/api/stats`
+- [x] `/api/search`（线性前缀，不依赖 Trie）与 `/api/stats`（统计聚合，2026-10-15）
 
 > 撤销/重做改由客户端 GUI 实现，服务端不再规划 `UndoStack` 与 `/api/undo`、`/api/redo`（2026-10-08 定）。
 
