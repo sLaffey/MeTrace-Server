@@ -98,7 +98,7 @@ endif()
 # ---------- 测试 ----------
 # 结构单测：普通 main + 轻量断言助手（与 server 同标准，目标零警告）
 enable_testing()
-foreach(test_name test_hashtable test_recommender)
+foreach(test_name test_hashtable test_recommender test_linkedlist test_trie test_heap test_item test_database)
     add_executable(${test_name} tests/${test_name}.cpp)
     target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     if(MSVC)
@@ -109,9 +109,21 @@ foreach(test_name test_hashtable test_recommender)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
-# 涉及 Item 的单测需要 Item 的实现与 nlohmann 头文件路径
+# 各单测按依赖补充实现与第三方头文件路径
 target_sources(test_recommender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Item.cpp)
 target_link_libraries(test_recommender PRIVATE nlohmann_json::nlohmann_json)
+
+target_sources(test_item PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Item.cpp)
+target_link_libraries(test_item PRIVATE nlohmann_json::nlohmann_json)
+
+target_sources(test_trie PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Trie.cpp)
+
+target_sources(test_database PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Item.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Trie.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/service/DataBase.cpp
+)
+target_link_libraries(test_database PRIVATE nlohmann_json::nlohmann_json)
 
 # ---------- 安装 / 打包 ----------
 include(GNUInstallDirs)
