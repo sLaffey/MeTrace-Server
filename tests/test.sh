@@ -9,6 +9,7 @@
 #   POST /api/items           新增（默认值、标签自动注册与去重）
 #   GET/PUT/DELETE /api/items/{id}
 #   GET  /api/tags            标签表有序枚举
+#   POST /api/tags            新增标签（body 契约、同名幂等、长度边界）
 # 同时覆盖 DataBase::load 的种子加载语义（幽灵标签丢弃、tags 排序去重）与
 # 启动行为（文件不存在按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动、不改写文件），
 # 以及 type 白名单（含 uncategorized）在查询 / 创建 / 更新 / 加载四个入口的一致性。
@@ -111,6 +112,7 @@ api_get()    { request "$BASE$1"; }
 api_post()   { request -X POST "$BASE/api/items" -H "$CT" -d "$1"; }
 api_put()    { request -X PUT "$BASE/api/items/$1" -H "$CT" -d "$2"; }
 api_delete() { request -X DELETE "$BASE/api/items/$1"; }
+api_post_tag() { request -X POST "$BASE/api/tags" -H "$CT" -d "$1"; }
 
 # 只需要状态码时用这几个，避免污染 RESP_*。
 status_of()     { curl -s -m 3 -o /dev/null -w '%{http_code}' "$@"; }
@@ -118,6 +120,7 @@ status_get()    { status_of "$BASE$1"; }
 status_post()   { status_of -X POST "$BASE/api/items" -H "$CT" -d "$1"; }
 status_put()    { status_of -X PUT "$BASE/api/items/$1" -H "$CT" -d "$2"; }
 status_delete() { status_of -X DELETE "$BASE/api/items/$1"; }
+status_post_tag() { status_of -X POST "$BASE/api/tags" -H "$CT" -d "$1"; }
 
 content_type() { # <path>
     curl -s -m 3 -D - -o /dev/null "$BASE$1" | tr -d '\r' \
@@ -395,6 +398,39 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
+echo "== 标签写入接口（POST /api/tags）=="
+# ---------------------------------------------------------------------------
+WRITE_TAG="回归标签_$$_$RANDOM"
+BOUND_TAG50="$(printf 'b%.0s' $(seq 1 50))"
+BOUND_TAG51="$(printf 'b%.0s' $(seq 1 51))"
+
+api_get '/api/tags?limit=100'
+TAGS_BEFORE="$(jqv '.total' "$RESP_BODY")"
+
+api_post_tag "{\"name\":\"$WRITE_TAG\"}"
+check 'POST /api/tags 返回 201' 201 "$RESP_STATUS"
+checkjq 'POST /api/tags 原样回传 name' "$WRITE_TAG" '.name' "$RESP_BODY"
+
+api_get '/api/tags?limit=100'
+checkjq '新标签进入标签表' true "(.tags | index(\"$WRITE_TAG\")) != null" "$RESP_BODY"
+checkjq '标签总数 +1' "$((TAGS_BEFORE + 1))" '.total' "$RESP_BODY"
+
+api_post_tag "{\"name\":\"$WRITE_TAG\"}"
+check '同名标签重复创建幂等（仍 201）' 201 "$RESP_STATUS"
+api_get '/api/tags?limit=100'
+checkjq '同名幂等不改变总数' "$((TAGS_BEFORE + 1))" '.total' "$RESP_BODY"
+
+check 'POST /api/tags 缺 name 返回 400' 400 "$(status_post_tag '{}')"
+check 'POST /api/tags name 非字符串返回 400' 400 "$(status_post_tag '{"name":1}')"
+check 'POST /api/tags name 空串返回 400' 400 "$(status_post_tag '{"name":""}')"
+check 'POST /api/tags name 恰好 50 字节合法' 201 "$(status_post_tag "{\"name\":\"$BOUND_TAG50\"}")"
+check 'POST /api/tags name 超过 50 字节返回 400' 400 "$(status_post_tag "{\"name\":\"$BOUND_TAG51\"}")"
+check 'POST /api/tags 空 body 返回 400' 400 "$(status_post_tag '')"
+check 'POST /api/tags body 非 JSON 返回 400' 400 "$(status_post_tag 'not json')"
+check 'POST /api/tags body 为数组返回 400' 400 "$(status_post_tag '[]')"
+
+# ---------------------------------------------------------------------------
+echo
 echo "== 条目 CRUD =="
 # ---------------------------------------------------------------------------
 api_post '{"type":"book","title":"测试条目","author":"测试作者","description":"测试简介","date":"2024-01-01","progress":0.5,"score":90,"comment":"测试短评","tags":["科幻","新标签","科幻"]}'
@@ -542,6 +578,39 @@ if start_server "$WORK/empty.json" "$EMPTY_PORT" "$WORK/empty.log"; then
 else
     check '数据库文件不存在时按空库启动' true false
     cat "$WORK/empty.log" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 写操作落盘：写入 → 杀进程 → 重启 → 数据仍在
+# （覆盖 save-on-write、空库启动后建库落盘、条目标签与独立标签两条路径）
+# ---------------------------------------------------------------------------
+PERSIST_DB="$WORK/persist.json"
+PERSIST_PORT="$(free_port 18300 18400)"
+PERSIST_BASE="http://127.0.0.1:$PERSIST_PORT"
+if start_server "$PERSIST_DB" "$PERSIST_PORT" "$WORK/persist1.log"; then
+    check '落盘：空库首次写入条目返回 201' 201 \
+        "$(status_of -X POST "$PERSIST_BASE/api/items" -H "$CT" -d '{"type":"book","title":"落盘条目","tags":["落盘标签"]}')"
+    check '落盘：独立标签写入返回 201' 201 \
+        "$(status_of -X POST "$PERSIST_BASE/api/tags" -H "$CT" -d '{"name":"独立标签"}')"
+    kill "$SERVER_PID" 2>/dev/null
+    wait "$SERVER_PID" 2>/dev/null
+    if start_server "$PERSIST_DB" "$PERSIST_PORT" "$WORK/persist2.log"; then
+        PERSIST_ITEMS="$(curl -s -m 3 "$PERSIST_BASE/api/items")"
+        PERSIST_TAGS="$(curl -s -m 3 "$PERSIST_BASE/api/tags")"
+        check '落盘：重启后条目仍在' 1 "$(jqv '.total' "$PERSIST_ITEMS")"
+        check '落盘：重启后标题正确' '落盘条目' "$(jqv '.items[0].title' "$PERSIST_ITEMS")"
+        check '落盘：重启后条目标签仍在' true \
+            "$(jqv '(.items[0].tags | index("落盘标签")) != null' "$PERSIST_ITEMS")"
+        check '落盘：重启后独立标签仍在' true \
+            "$(jqv '(.tags | index("独立标签")) != null' "$PERSIST_TAGS")"
+        kill "$SERVER_PID" 2>/dev/null
+    else
+        check '落盘：重启服务端' true false
+        cat "$WORK/persist2.log" >&2
+    fi
+else
+    check '落盘：空库首次写入条目返回 201' 201 false
+    cat "$WORK/persist1.log" >&2
 fi
 
 # ---------------------------------------------------------------------------
