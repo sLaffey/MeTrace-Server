@@ -71,6 +71,7 @@ void DataBase::clearUnlocked()
 {
     next_id = 1;
     items.clear();
+    item_index.clear();
     tags.clear();
     db_path.clear();
 }
@@ -170,7 +171,8 @@ bool DataBase::loadUnlocked(const std::string& dbPath)
 
     clearUnlocked();
     for (const metrace::core::Item& item : staged.items) {
-        items.insert(item);
+        metrace::core::Item* inserted = items.insert(item);
+        item_index.insert(inserted->getId(), inserted);
     }
     for (const metrace::core::Tag& tag : staged.tags) {
         tags.insert(tag);
@@ -239,11 +241,12 @@ bool DataBase::load(const std::string& dbPath)
 /// @brief 按照 id 获取条目，返回指针，若不存在返回 nullptr
 /// @param id 
 /// @return 一个指向条目的指针，若不存在返回 nullptr
+/// @note 走 id 索引（HashTable），平均 O(1)；返回的指针只在锁内有效（§5.2）
 const metrace::core::Item* DataBase::getItem(int id) const
 {
     std::lock_guard<std::mutex> lock(mtx);
-    const metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
-    return item;
+    metrace::core::Item* const* found = item_index.find(id);
+    return found != nullptr ? *found : nullptr;
 }
 
 /// @brief 根据传入的 patch 更新条目
@@ -253,10 +256,11 @@ const metrace::core::Item* DataBase::getItem(int id) const
 const ItemResult metrace::service::DataBase::updateItem(int id, const metrace::service::ItemPatch& patch)
 {
     std::lock_guard<std::mutex> lock(mtx);
-    metrace::core::Item* item = items.find([id](const metrace::core::Item& item) { return item.getId() == id; });
-    if (item == nullptr) {
+    metrace::core::Item** found = item_index.find(id);
+    if (found == nullptr) {
         return {WriteStatus::NotFound, nullptr};
     }
+    metrace::core::Item* item = *found;
 
     const metrace::core::Item before = *item;
     if (patch.type.has_value()) item->setType(patch.type.value());
@@ -285,8 +289,10 @@ const ItemResult metrace::service::DataBase::updateItem(int id, const metrace::s
 WriteStatus metrace::service::DataBase::removeItem(int id)
 {
     std::lock_guard<std::mutex> lock(mtx);
-    bool ans = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
-    if (!ans) return WriteStatus::NotFound;
+    if (item_index.find(id) == nullptr) return WriteStatus::NotFound;
+    const bool removed = items.remove([id](const metrace::core::Item& item) { return item.getId() == id; });
+    if (!removed) return WriteStatus::NotFound; // 理论上不可达：索引与链表同锁同步
+    item_index.erase(id);
     if (!saveUnlocked(db_path)) return WriteStatus::PersistFailed;
     return WriteStatus::Ok;
 }
@@ -302,10 +308,12 @@ const ItemResult DataBase::createItem(metrace::core::Item item)
     item.created_at = item.updated_at;
     item.uniqueTags();
     registerTags(item.tags);
-    const metrace::core::Item* res = items.insert(item);
+    metrace::core::Item* res = items.insert(item);
+    item_index.insert(item.id, res);
 
     if (!saveUnlocked(db_path)) {
         items.remove(item);
+        item_index.erase(item.id);
         return {WriteStatus::PersistFailed, nullptr};
     }
     return {WriteStatus::Ok, res};

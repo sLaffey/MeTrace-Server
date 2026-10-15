@@ -41,8 +41,8 @@ public:
 
     /// @brief 在链表头部插入一个值，会进行一次复制构造
     /// @param value 
-    /// @return 指向新插入元素的指针
-    const T* insert(const T& value)
+    /// @return 指向新插入元素的指针（可变，供 id 索引等辅助结构持有）
+    T* insert(const T& value)
     {
         ++size;
         Node* t = new Node(value);
