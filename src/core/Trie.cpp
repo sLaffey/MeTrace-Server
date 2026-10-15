@@ -4,7 +4,7 @@ namespace metrace::core {
 
 void Trie::clear()
 {
-    for (unsigned char c = 0; c < 256; ++c) {
+    for (int c = 0; c < 256; ++c) { // 循环下标用 int：unsigned char 在 255+1 时回绕成 0，条件恒真会死循环
         delete head.next[c];
         head.next[c] = nullptr;
     }
@@ -39,7 +39,7 @@ void Trie::forEachRec(const Node* cur, std::string& prefix, const std::function<
     if (cur->is_word) {
         func(prefix);
     }
-    for (unsigned char i = 0; i < 256; ++i) {
+    for (int i = 0; i < 256; ++i) { // 同上：下标不要用 unsigned char
         if (cur->next[i] != nullptr) {
             prefix.push_back(char(i));
             forEachRec(cur->next[i], prefix, func);
