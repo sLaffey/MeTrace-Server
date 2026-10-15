@@ -12,11 +12,8 @@ void Trie::clear()
     head.is_word = false;
 }
 
-/// @brief 递归删除单词
-/// @param cur 
-/// @param s 
-/// @param depth 
-/// @return 若单词已不存在返回 false
+/// @brief 递归删除单词，并向上清理空链
+/// @return 节点删除后是否为空（供父层断链与 delete）
 bool Trie::removeRec(Node* cur, const std::string& s, std::size_t depth)
 {
     if (depth == s.size()) {
@@ -66,7 +63,11 @@ bool Trie::insert(const std::string& s)
 
 bool Trie::remove(const std::string& s)
 {
-    return removeRec(&head, s, 0);
+    if (!find(s)) {
+        return false;
+    }
+    removeRec(&head, s, 0);
+    return true;
 }
 
 bool Trie::find(const std::string& s) const
