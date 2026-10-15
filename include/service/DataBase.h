@@ -45,6 +45,11 @@ struct TagQueryResult {
     std::vector<metrace::core::Tag> tags;
 };
 
+struct RecommendQuery {
+    std::optional<int> item_id; ///< 缺省 = 冷启动（全局评分榜）
+    std::size_t top_n = 10;     ///< Router 已按契约截断到 [1,50]
+};
+
 struct ItemPatch {
     std::optional<std::string> type;
     std::optional<std::string> title;
@@ -105,6 +110,10 @@ public:
 
     const ItemQueryResult queryItem(const metrace::service::ItemQuery& query) const;
     const TagQueryResult queryTag(const metrace::service::TagQuery& query) const;
+
+    /// @brief 相似推荐（§8.5）
+    /// @return nullopt = item_id 指定但不存在；空 vector = 合法空结果（空库 / 只有自身）
+    std::optional<std::vector<const metrace::core::Item*>> recommend(const RecommendQuery& query) const;
 };
 
 } // namespace metrace::service
