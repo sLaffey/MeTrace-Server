@@ -439,6 +439,12 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
             return;
         }
 
+        if (!body.at("name").is_string()) {
+            res.status = 400;
+            res.set_content(errorBody("Name must be a string"), kJsonType);
+            return;
+        }
+
         metrace::core::Tag tag = body.at("name");
         if (!metrace::core::checkTag(tag)) {
             res.status = 400;
