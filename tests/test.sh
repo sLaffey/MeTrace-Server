@@ -10,6 +10,7 @@
 #   GET/PUT/DELETE /api/items/{id}
 #   GET  /api/tags            标签表有序枚举
 #   POST /api/tags            新增标签（body 契约、同名幂等、长度边界）
+#   GET  /api/recommend       相似推荐（冷启动评分榜 / 指定目标）
 # 同时覆盖 DataBase::load 的种子加载语义（幽灵标签丢弃、tags 排序去重）与
 # 启动行为（文件不存在按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动、不改写文件），
 # 以及 type 白名单（含 uncategorized）在查询 / 创建 / 更新 / 加载四个入口的一致性。
@@ -428,6 +429,40 @@ check 'POST /api/tags name 超过 50 字节返回 400' 400 "$(status_post_tag "{
 check 'POST /api/tags 空 body 返回 400' 400 "$(status_post_tag '')"
 check 'POST /api/tags body 非 JSON 返回 400' 400 "$(status_post_tag 'not json')"
 check 'POST /api/tags body 为数组返回 400' 400 "$(status_post_tag '[]')"
+
+# ---------------------------------------------------------------------------
+echo
+echo "== 相似推荐（GET /api/recommend）=="
+# ---------------------------------------------------------------------------
+check 'recommend topN 非数字返回 400' 400 "$(status_get '/api/recommend?topN=abc')"
+check 'recommend item_id 非数字返回 400' 400 "$(status_get '/api/recommend?item_id=abc')"
+check 'recommend item_id 不存在返回 404' 404 "$(status_get '/api/recommend?item_id=999999')"
+check 'recommend item_id 空值视同冷启动（200）' 200 "$(status_get '/api/recommend?item_id=')"
+check 'recommend topN=0 数值越界宽容（200）' 200 "$(status_get '/api/recommend?topN=0')"
+check 'recommend 无参数（冷启动）返回 200' 200 "$(status_get '/api/recommend')"
+
+if [[ "$SEED_MODE" -eq 1 ]]; then
+api_get '/api/recommend?topN=5'
+check '冷启动 topN=5 返回 5 条' true "$(jqv '(.items | length) == 5' "$RESP_BODY")"
+checkjqc '冷启动按评分榜（同分按 id 兜底）' '[2,1,12,4,13]' '[.items[].id]' "$RESP_BODY"
+
+api_get '/api/recommend?topN=999'
+checkjq 'topN 超上限截断（种子库 21 条全量）' 21 '.items | length' "$RESP_BODY"
+
+api_get '/api/recommend?topN=100'
+checkjqc '冷启动未评分条目垫底且按 id 升序' '[10,14,20,21]' '[.items[-4:][].id]' "$RESP_BODY"
+checkjq '垫底条目确为未评分' true '([.items[-4:][].score] | all(. == 0))' "$RESP_BODY"
+
+api_get '/api/recommend?item_id=1&topN=5'
+checkjqc 'item_id=1 相似 Top5（3×标签 + 2×作者 + 1×类型）' '[13,3,9,5,2]' '[.items[].id]' "$RESP_BODY"
+check '推荐结果不含条目自身' true "$(jqv '([.items[].id] | index(1)) == null' "$RESP_BODY")"
+
+api_get '/api/recommend?item_id=1&topN=100'
+checkjq 'item_id=1 全量 20 条（不含自身）' 20 '.items | length' "$RESP_BODY"
+
+api_get '/api/recommend?item_id=1&topN=0'
+checkjq 'item_id=1 且 topN=0 截断为 1 条' 1 '.items | length' "$RESP_BODY"
+fi
 
 # ---------------------------------------------------------------------------
 echo

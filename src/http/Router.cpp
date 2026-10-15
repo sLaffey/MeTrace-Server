@@ -241,6 +241,34 @@ static std::optional<metrace::service::TagQuery> parseTagQuery(const httplib::Re
     return q;
 }
 
+static std::optional<metrace::service::RecommendQuery> parseRecommendQuery(const httplib::Request& req)
+{
+    metrace::service::RecommendQuery q;
+
+    if (req.has_param("item_id")) {
+        const std::string& v = req.get_param_value("item_id");
+        if (!v.empty()) { // 空值视同未提供（冷启动）
+            long long id;
+            if (!parseIntStrict(v, id) || id > std::numeric_limits<int>::max() || id < std::numeric_limits<int>::min()) {
+                return std::nullopt;
+            }
+            q.item_id = static_cast<int>(id);
+        }
+    }
+    if (req.has_param("topN")) {
+        const std::string& v = req.get_param_value("topN");
+        if (!v.empty()) {
+            long long top_n;
+            if (!parseIntStrict(v, top_n)) return std::nullopt;
+            if (top_n < 1) top_n = 1;   // 数值越界宽容：截断到 1~50（同 limit 口径，§8.3）
+            if (top_n > 50) top_n = 50;
+            q.top_n = static_cast<std::size_t>(top_n);
+        }
+    }
+
+    return q;
+}
+
 static std::string errorBody(const std::string& msg)
 {
     nlohmann::json j;
@@ -468,6 +496,31 @@ void registerRoutes(httplib::Server& server, metrace::service::DataBase& db)
             case metrace::service::WriteStatus::NotFound:
                 throw std::runtime_error("Unexpected return value of DataBase::createTag(), get metrace::service::WriteStatus::NotFound.");
         }
+        return;
+    });
+
+    // GET /api/recommend 相似推荐；item_id 缺省 = 冷启动全局评分榜
+    server.Get("/api/recommend", [&db](const httplib::Request& req, httplib::Response& res) {
+        const std::optional<metrace::service::RecommendQuery> parsed = parseRecommendQuery(req);
+        if (!parsed.has_value()) {
+            res.status = 400;
+            res.set_content(errorBody("Invalid query parameters"), kJsonType);
+            return;
+        }
+
+        const std::optional<std::vector<const metrace::core::Item*>> ans = db.recommend(parsed.value());
+        if (!ans.has_value()) {
+            res.status = 404;
+            res.set_content(errorBody("Item not found"), kJsonType);
+            return;
+        }
+
+        nlohmann::json out;
+        out["items"] = nlohmann::json::array();
+        for (const metrace::core::Item* item : ans.value()) {
+            out["items"].push_back(item->toJson());
+        }
+        res.set_content(out.dump(), kJsonType);
         return;
     });
 
