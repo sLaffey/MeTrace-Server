@@ -1,5 +1,6 @@
 .vscode/
 build/
+build-vscode/
 
 # 运行时数据文件
 data/

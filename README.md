@@ -4,7 +4,7 @@
 >
 > 《计算机科学与工程程序设计实践》课程设计项目。C/S 架构，服务端纯 C++ 实现，客户端 GUI 通过 HTTP + JSON 通信。
 
-一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、Trie、哈希表、推荐算法等均为手写实现）。撤销/重做由客户端 GUI 本地实现（双栈在客户端），服务端只提供普通 CRUD。
+一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、Trie 已实现并投入使用；哈希表、推荐算法在开发计划中，见[开发进度](#开发进度)）。撤销/重做由客户端 GUI 本地实现（双栈在客户端），服务端只提供普通 CRUD。
 
 ---
 
@@ -31,7 +31,7 @@
 - 标签系统：打标签时自动创建不存在的标签，条目与标签多对多关联
 - 组合过滤 + 排序 + 分页：按类型、标签筛选，按评分 / 日期 / 创建时间 / 标题排序；排序取 Top-N 采用手写淘汰堆，O(n log k)
 - 完整的参数校验与语义化状态码（400 / 404 / 500）
-- 手写数据结构承担全部业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表、**哈希表**作 id 索引、**推荐算法**基于标签重叠/作者/类型相似度
+- 手写数据结构承担主要业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表；**哈希表**（id 索引）与**推荐算法**为计划项，见[开发进度](#开发进度)
 - 撤销/重做归客户端：服务端不设 `/api/undo`、`/api/redo`，只保证写请求原子并回传完整 after 态，供客户端双栈回放
 - 原子落盘：写操作先写临时文件再 rename，中途崩溃不会损坏数据文件
 - 线程安全：httplib 线程池并发处理请求，数据访问通过单一互斥锁串行化
@@ -112,8 +112,10 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
   -H 'Content-Type: application/json' \
   -d '{"progress":1,"score":98}'
 
-# 和《三体》相似的条目
-curl 'http://127.0.0.1:8000/api/recommend?item_id=1&topN=5'
+# 新增标签（同名幂等；相似推荐 /api/recommend 尚在计划中）
+curl -X POST http://127.0.0.1:8000/api/tags \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"科幻"}'
 
 # 删除
 curl -i -X DELETE http://127.0.0.1:8000/api/items/1
@@ -121,7 +123,7 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 
 ### 接口测试
 
-`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）与启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 190 项断言。
+`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）与启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 190 项断言。2026-10-15 复核：**143 通过 / 47 失败**——失败源于两个已定位的实现缺陷（加载丢弃标签、写路径二次加锁），修复清单见 `AGENT.md` §3.2；`POST /api/tags` 暂未纳入覆盖。
 
 ```bash
 ./tests/test.sh                                 # 依赖 curl 与 jq
@@ -192,11 +194,11 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | DELETE | `/api/items/{id}` | 删除条目 | — | `204`（无 body） |
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}` |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{"name":"科幻"}` |
-| GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
+| GET | `/api/recommend` | 相似推荐（计划，未实现） | `?item_id=&topN=` | `{"items":[Item,...]}` |
 
 > **撤销/重做不在服务端**：双栈由客户端 GUI 实现，服务端不提供对应接口；客户端回放所需的契约（完整 after 态、DELETE 无 body、只读 id）见下文「撤销/重做（客户端实现）」小节。
 >
-> 计划中：`/api/search`（Trie 前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
+> 计划中：`/api/recommend`（相似推荐）、`/api/search`（前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
 
 ### 查询参数
 
@@ -326,7 +328,7 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
 - 撤销 PUT 时旧值需由客户端自行快照（PUT 是部分更新，只回传 after 态）；
 - 撤销"新增条目" = 发 DELETE，条目引用的标签仍留在全局标签表（孤儿标签是可接受的简化），标签没有删除接口。
 
-**GET /api/recommend?item_id=1&topN=5**
+**GET /api/recommend?item_id=1&topN=5（计划中，尚未实现）**
 
 返回与指定条目最相似的 TopN 条目（不含自身）。相似度 = `3 × 共同标签数 + 2 × 同作者 + 1 × 同类型`，同分时评分高者优先。`item_id` 缺省时返回全局高分榜。
 
@@ -344,7 +346,7 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
 }
 ```
 
-- **加载**：启动时全量读入内存，逐条反序列化建链表；文件不存在按空库启动；文件损坏、字段缺失或字段值非法（未知 `type`、`score`/`progress` 越界、`title` 为空或超 200 字节、tag 为空或超 50 字节、`id` 重复等）一律拒绝启动（fail-fast），绝不吞错后用空库覆盖原文件。**不做迁移**：早期版本写入的 `type: "null"` 属于非法值，需要手工改成 `"uncategorized"`。
+- **加载**：启动时全量读入内存，逐条反序列化建链表；文件不存在按空库启动；文件损坏、字段缺失或字段值非法（未知 `type`、`score`/`progress` 越界、`title` 为空或超 200 字节、tag 为空或超 50 字节、`id` 重复等）一律拒绝启动（fail-fast），绝不吞错后用空库覆盖原文件。**不做迁移**：早期版本写入的 `type: "null"` 属于非法值，需要手工改成 `"uncategorized"`。实现上为"先全部解析校验到暂存区、成功后替换内存内容"（原子化，2026-10-13），加载失败不会留下半加载状态。
 - **保存**：每个写操作成功后全量覆写；写入是**原子操作**（先写临时文件再 rename），中途崩溃不会损坏数据文件。
 - `next_id` 持久化在文件中，删除条目后 ID 不复用。
 - 删除该文件即可清空所有数据，下次启动自动从空库开始。
@@ -389,12 +391,13 @@ MeTrace-Server/
 │   ├── test.sh                  # 自包含回归测试（自动起停服务端，curl + jq）
 │   └── metrace.json             # 测试种子数据（21 条，含 1 条 uncategorized，已纳入版本控制）
 ├── data/                        # 运行时生成的 JSON 存储文件（已 gitignore）
-└── build/                       # 构建产物，含 FetchContent 缓存的依赖
+├── build/                       # 构建产物（CLI/脚本：Unix Makefiles），含 FetchContent 缓存的依赖
+└── build-vscode/                # VS Code CMake Tools 专用构建目录（Ninja，已 gitignore）
 ```
 
 ### 线程安全
 
-httplib 默认用线程池并发处理请求，而内存链表不是线程安全的。`DataBase` 持有一把 `std::mutex`，所有公开方法（含保存）进入即加锁，"改内存 + 落盘"在同一临界区内完成——同一时刻只有一个线程操作数据，对这个量级的个人应用足够。
+httplib 默认用线程池并发处理请求，而内存链表不是线程安全的。`DataBase` 持有一把 `std::mutex`，所有公开方法（含保存）进入即加锁，"改内存 + 落盘"在同一临界区内完成——同一时刻只有一个线程操作数据，对这个量级的个人应用足够。实现上进一步拆成"公有加锁壳 + 私有 `*Unlocked` 无锁实现"（`load`/`save`/`clear`）；当前写路径误调加锁壳导致二次加锁，属待修回归（`AGENT.md` §3.2-2）。
 
 ---
 
@@ -428,8 +431,9 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] Trie 插入/查询/删除（并作为全局标签表）；Heap 固定容量堆
 - [x] DataBase::load（标签校验：幽灵标签丢弃）+ `next_id` 兜底 + save 原子落盘
 - [x] load 值域校验（`type` 白名单、title/score/progress/tags、id 唯一性、时间戳）：fail-fast、不做迁移，已实现（2026-10-09）
-- [x] Item 序列化全字段与服务端字段口子（id/时间戳自动管理）；LinkedList 遍历/查找/计数
-- [ ] 互斥锁、写操作锁内落盘（收尾中）
+- [x] Item 序列化全字段与服务端字段口子（id/时间戳自动管理）；LinkedList 遍历/查找/计数/clear
+- [x] 互斥锁、写操作锁内落盘、`load` 原子化（暂存 + 提交）（2026-10-10~13）
+- [ ] 修复已知回归：加载丢标签、写路径二次加锁、缺文件未设 `db_path`（`AGENT.md` §3.2 P0）
 
 ### 阶段 2：HTTP CRUD（进行中）
 
@@ -437,8 +441,8 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] 写路径收口：统一校验（键白名单/类型/值域/tags 上限）、错误体规范、时间戳刷新与标签注册
 - [x] `type` 白名单定为 `uncategorized`（未分类）/`book`/`movie`/`music`，未分类可显式创建；POST 的 `type` 必填（2026-10-08）
 - [x] PUT body 解析修复、`limit` 契约截断 1~100（`limit=0` 曾致服务崩溃）、`/` 回 text/plain
-- [ ] POST `/api/tags`、错误处理器挂载与收尾
-- [x] `tests/test.sh` 自包含回归全绿（190 项，含未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
+- [x] POST `/api/tags`（body `{"name":...}` + 201）与 error/exception handler、PUT/DELETE 状态码修正（2026-10-12）
+- [x] `tests/test.sh` 自包含回归（190 项，含未分类与加载校验矩阵）；2026-10-15 复核 143/47（见 `AGENT.md` §3.2）；旧 `test_api.sh` 已删除
 
 ### 阶段 3：HashTable 索引与推荐（10.10~10.14）
 
@@ -461,6 +465,10 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 **首次 `cmake` 卡在下载依赖？**
 
 `FetchContent` 需要访问 GitHub 拉取依赖，缓存在 `build/_deps/`。网络不畅时可以配置代理，或提前在有网的环境构建一次后把 `build/` 目录一起带走。**演示前务必先跑通一次构建，之后不要删除 `build/`**。
+
+**`cmake` 报 "generator does not match the generator used previously"？**
+
+生成器记录在构建目录的 `CMakeCache.txt` 里（`CMakeLists.txt` 不指定它），同一个目录被不同工具用不同生成器配置过就会报这个错（例如 CLI 的 Unix Makefiles 与 VS Code CMake Tools 的 Ninja）。本仓库约定：CLI/脚本用 `build/`，VS Code CMake Tools 用 `build-vscode/`（已 gitignore），互不干扰；若已混用，删掉对应目录的 `CMakeCache.txt` 与 `CMakeFiles/` 后重新配置即可。
 
 **为什么 `build/bin/server` 而不是 `build/server`？**
 
