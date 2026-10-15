@@ -49,6 +49,7 @@
 - [x] `Item`：int64 秒级时间戳、`touch()`、`friend class ::metrace::service::DataBase`、`fromJson`/`fromCreateJson` 双入口、`setTags` 内置 sort+unique（tags 有序去重的构造保证）、服务端字段 `= 0` 默认初始化；未分类取值由 `"null"` 改名为 `"uncategorized"`（2026-10-08，白名单即 `kItemTypeName[4]`）
 - [x] `Heap`：固定容量模板堆，`std::function` 比较器注入，淘汰式 `bool push`，siftUp/siftDown，拷贝已删；**容量为 0 抛 `std::invalid_argument`（2026-10-09 补）**
 - [x] `HashTable`（2026-10-15 实现并接入）：链地址法 + 除法散列 + 素数桶（17 起步、约 2x 扩容）+ 负载因子 0.75 重挂；**不拥有值**（存 `Item*`）；id → `Item*` 索引接入 `getItem/updateItem/removeItem/createItem` 与 `load/clear`，与链表同锁同步（§9.5）；单测 `tests/test_hashtable.cpp`
+- [x] `Recommender`（2026-10-15 实现并接入）：相似度 `3×共同标签 + 2×同作者 + 1×同类型`；全序比较器（相似度→评分→id）复用淘汰堆取 TopN；`GET /api/recommend`（缺省冷启动评分榜、目标不存在 404、topN 截断 [1,50]）；扫描 O(n·k) 不建图（§8.5）；单测 `tests/test_recommender.cpp`
 - [x] `DataBase`：
   - 锁：`mutex` + "公有入口加锁、私有 `*Unlocked` 实现"拆分（2026-10-13）；写方法统一调 `saveUnlocked`（2026-10-15）
   - `load`：**暂存 + 提交两段式**——全部解析/校验进暂存区 `StagedData`（vector<Item> + vector<Tag> + next_id），成功后 `clearUnlocked()` + 逐条复制装入；失败不触碰现状（2026-10-13）；幽灵过滤查暂存表、缺文件分支清空并设 `db_path`（2026-10-15 修复）
@@ -58,14 +59,14 @@
 - [x] 写路径收口：`createItem` 盖章 id/时间戳 + `uniqueTags` + `registerTags`；`updateItem` 应用 patch 后 `touch()` + `registerTags`
 - [x] `http/Router`：`/`、`/ping`、GET/POST/PUT/DELETE `/api/items(/{id})`、GET `/api/tags`、**POST `/api/tags`（body `{"name":...}` + 201，2026-10-12 修正）**；parse 助手族 + `checkItemJson` 统一键/类型/值域校验 + `errorBody`；`set_error_handler`/`set_exception_handler` 已挂载；switch 对不可能值抛异常兜底
 - [x] load 值域校验落地（2026-10-09）：core 谓词 `checkTitle/checkProgress/checkScore/checkTag/checkTags` + `validateItem`；`load` 逐条校验（值域 + id 唯一性 + 时间戳）后 fail-fast，Router 写路径复用同一份谓词（§6.2/§16.9）
-- [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）；测试副本 `tests/metrace.json`（21 条，含 1 条 `uncategorized`）已纳入版本控制，回归脚本 `tests/test.sh` 自包含起停临时服务端（2026-10-15 扩到 210 项）
-- [x] **2026-10-15 复核（修复后）**：构建零警告；`tests/test.sh` **210 项全绿**（新增 POST /api/tags 契约与"写 → 重启 → 读"落盘回归）
+- [x] 种子数据 `data/metrace.json`（20 条，时间戳格式；.gitignore 已覆盖 `data/`）；测试副本 `tests/metrace.json`（21 条，含 1 条 `uncategorized`）已纳入版本控制，回归脚本 `tests/test.sh` 自包含起停临时服务端（2026-10-15 扩到 225 项）
+- [x] **2026-10-15 复核（修复后）**：构建零警告；`tests/test.sh` **225 项全绿**（含 POST /api/tags、相似推荐与"写 → 重启 → 读"落盘回归）
 
 ### 3.2 待办（按优先级，2026-10-15 核对；旧缺陷 1~4 与测试缺口均已清）
 
 1. `offset` 解析在 long long→size_t 收窄前补上限检查（§8.3）；
-2. 其余结构的 `tests/test_<结构>.cpp`（LinkedList/Trie/Heap；HashTable 已交）——`Trie::clear` 悬垂/循环回绕这类缺陷 HTTP 回归够不到，需要结构单测直接覆盖；
-3. Recommender + `/api/recommend`（§8.5）；可选 `/api/search`、`/api/stats`；
+2. 其余结构的 `tests/test_<结构>.cpp`（LinkedList/Trie/Heap；HashTable、Recommender 已交）——`Trie::clear` 悬垂/循环回绕这类缺陷 HTTP 回归够不到，需要结构单测直接覆盖；
+3. 可选 `/api/search`、`/api/stats`（§18）；
 4. 50~100 条演示数据、1000 条压测（阶段 4）。
 
 > 修复记录：2026-10-06 审查的写路径问题（updateItem 的 touch/registerTags、POST 非抛解析/必填闸门/类型谓词、tags 与 score 校验、错误体统一）已修；同日晚二次修复 PUT 解析/limit 截断/拷贝赋值/text-plain。GET /api/tags 响应键已拍板以代码为准（`tags`），契约回改见 §8.2。~~`getCreatedAt()` 返回 `time_t` 与 int64_t 存储不一致~~（已统一为 `std::int64_t`，过时划去）。
@@ -80,6 +81,7 @@
 | 判等 | `Item::operator==` 按 id；内容哈希摘要方案已否决 | 身份走 id 即够，规模小 |
 | Top-N | 淘汰堆：堆顶=当前最差；比较器必须全序（同值按 id 裁决，score=0 永远最后） | O(n log k)；分页不重不漏的前提 |
 | 堆容量 | `min(offset + limit, items.size())` | offset 无上界，防恶意参数撑爆分配 |
+| 推荐路线 | 扫描打分 O(n·k) + 淘汰堆 TopN；不建邻接表图 | 规模小；图要维护 tag/author 索引、收益不足（2026-10-15 定） |
 | 错误通道 | 服务层一律返回值（`bool`/指针/`optional`），不抛异常；异常仅用于库边界与进程兜底 | 失败通道数量 = 真实失败模式数量 |
 | load/save 失败 | load 失败 → 日志 + 退出进程（fail-fast）；save 失败 → 日志 + 该请求回 500，进程继续 | save 半途失败绝不退出服务器 |
 | load 原子化 | 先整体解析/校验到暂存区（`StagedData`），成功后 `clearUnlocked()` + 复制装入；失败不触碰现状 | 启动路径的强保证；复制一次的成本可忽略（2026-10-13 定） |
@@ -106,21 +108,22 @@ MeTrace-Server/
 │   │   ├── Trie.h               # ✓ 标签表本体：insert(bool)/find/forEach(字典序)/remove/clear
 │   │   ├── Heap.h               # ✓ 固定容量堆（Top-N 淘汰语义）+ 容量 0 抛异常
 │   │   ├── HashTable.h          # ✓ 链地址法 + 素数扩容；不拥有值（§9.5）
-│   │   └── Recommender.h        # ○ 未开始（文件尚未创建）
+│   │   └── Recommender.h        # ✓ 相似度 + 全序比较器 + TopN（§8.5）
 │   ├── service/
-│   │   └── DataBase.h           # ✓ 锁 + `*Unlocked`（load/save/clear）+ clear + id 索引（HashTable）齐
+│   │   └── DataBase.h           # ✓ 锁 + `*Unlocked`（load/save/clear）+ id 索引 + recommend 齐
 │   └── http/
 │       └── Router.h             # ✓ 仅两条前向声明（2026-10-09）
 ├── src/                         # 与 include/ 一一对应 + main.cpp
 │   ├── main.cpp                 # ✓ 参数解析 + load fail-fast
 │   ├── core/{Item,Trie}.cpp     # ✓
-│   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘齐 + id 索引同锁同步（2026-10-15 复核）
-│   └── http/Router.cpp          # ✓ 七路由（含 POST /api/tags）+ 校验 + error/exception handler
+│   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘 + id 索引 + recommend（2026-10-15 复核）
+│   └── http/Router.cpp          # ✓ 八路由（含 POST /api/tags、GET /api/recommend）+ 校验 + error/exception handler
 ├── scripts/{build.sh,run.sh}
 ├── tests/
-│   ├── test.sh                  # ✓ 自包含回归（curl + jq，210 项；2026-10-15 全绿）
+│   ├── test.sh                  # ✓ 自包含回归（curl + jq，225 项；2026-10-15 全绿）
 │   ├── metrace.json             # ✓ 测试种子数据（21 条，含 1 条 uncategorized）
 │   ├── test_hashtable.cpp       # ✓ HashTable 结构单测（ctest）
+│   ├── test_recommender.cpp     # ✓ Recommender 结构单测（ctest）
 │   └── test_<结构>.cpp          # 计划：LinkedList/Trie/Heap 单测
 └── data/metrace.json            # 运行时种子 20 条（已 gitignore）
 ```
@@ -282,7 +285,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 | DELETE | `/api/items/{id}` | 删除条目 | — | 204 |
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}`（**名字数组，无 id**；响应键 `tags` 与资源名一致，2026-10-06 拍板以代码为准） |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | 201 + `{"name":"科幻"}` |
-| GET | `/api/recommend` | 相似推荐（计划，未实现） | `?item_id=&topN=` | `{"items":[Item,...]}` |
+| GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
 | GET | `/api/search` | 前缀搜索（计划） | `?q=&type=&limit=&offset=` | 同列表 |
 | GET | `/api/stats` | 统计聚合（可选） | `?type=` | `{total,by_type,score_dist}` |
 
@@ -314,9 +317,13 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **历史生命周期跟客户端进程**：客户端重启即清空撤销栈；服务端重启不影响客户端已持有的历史，数据本身由服务端持久化（写路径落盘已实现，2026-10-12）；
 - **不入栈判据仍是"状态变化"**：幂等写（例如同名标签重复创建）不该进客户端撤销栈。
 
-### 8.5 推荐语义
+### 8.5 推荐语义（已实现，2026-10-15）
 
-相似度 = `3×共同标签数 + 2×同作者 + 1×同类型`，同分时评分高者优先、未评分（0）最后；实现可遍历打分 O(n·k) 或邻接表图 O(V+E) 二选一；`item_id` 缺省返回高分榜（Heap 取 TopN）；响应不含条目自身。
+相似度 = `3×共同标签数 + 2×同作者 + 1×同类型`；共同标签用双指针在两条有序 tags 上求交（O(k₁+k₂)，k ≤ 20）；同作者要求双方 `author` 均非空且相等（两个"未知"不构成相似）；`type` 必填，相等即计分。
+
+排序全序：相似度高→低；同分评分高→低、未评分（0）最后；再同分按 id 升序（分批/翻页与确定性输出的硬前提）。`item_id` 缺省 = 冷启动评分榜（score 全 0，退化为评分排序）；`item_id` 指定但不存在 → 404；`topN` 默认 10、非数字 400、数值截断到 [1,50]（同 `limit` 口径，§8.3）；响应不含条目自身，形状 `{"items":[Item,...]}`。
+
+实现：`core/Recommender.h`（`similarityScore` / `betterRecommendation` / `recommendTopN`，复用淘汰堆 O(n log topN)）；`DataBase::recommend` 锁内收集候选（目标走 id 索引）→ 算法 → 解锁返回指针（§5.2 窗口）。不建邻接表图（§3.3 决策）。
 
 ---
 
@@ -364,11 +371,11 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 - **不拥有值**：析构逐桶 delete Entry 但绝不 delete 值；存的是 `Item*`（指向链表节点内的 data，节点地址稳定）——存拷贝无用（PUT 会改到副本），存 Node* 不可能（private 类型）
 - **接入点与同步不变量**（`DataBase` 单锁内，"条目 id ⇔ 索引项"）：`createItem` 插入后挂索引（落盘失败回滚时同步 `erase`）、`removeItem` 先查索引 → 摘链表 → `erase`、`getItem`/`updateItem` 直接走索引（平均 O(1)）、`loadUnlocked` 提交流程重建索引、`clearUnlocked` 清空索引；`queryItem` 仍全扫（过滤组合使索引失效，§15）
 - 收益与边界：单查/改/删的**查找**变 O(1)（但每次写仍全量 save O(n)，写路径渐进复杂度不变）；`find` 返回的指针只在锁内有效（§5.2）
-- 测试：`tests/test_hashtable.cpp`（基本 / 同桶冲突 / 跨扩容 / clear / 非拥有值 / 禁拷贝 `static_assert`）＋ `tests/test.sh` 210 项全绿作回归
+- 测试：`tests/test_hashtable.cpp`（基本 / 同桶冲突 / 跨扩容 / clear / 非拥有值 / 禁拷贝 `static_assert`）＋ `tests/test.sh` 225 项全绿作回归
 
 ### 9.6 结构 → 真实调用方对应表（答辩必问）
 
-服务端手写数据结构为 **LinkedList / Trie / Heap / HashTable 四个**（均已实现并接入），另加 **Recommender** 算法（计划）；**撤销/重做的双栈在客户端 GUI**（§8.4），不计入服务端结构账。
+服务端手写数据结构为 **LinkedList / Trie / Heap / HashTable 四个**（均已实现并接入），另加 **Recommender** 算法（已实现）；**撤销/重做的双栈在客户端 GUI**（§8.4），不计入服务端结构账。
 
 `LinkedList` → 全部 CRUD（主存储）；`Trie` → 全局标签表（createTag 查重 / GET /api/tags / save 收集）；`Heap` → listItems 的 Top-N 与 recommend 冷启动高分榜；`HashTable` → getItem / updateItem / removeItem / createItem 的 id 索引（§9.5）；`Recommender` → recommend（规格见 §8.5）。**只写不用的结构不算数**。
 
@@ -416,9 +423,9 @@ ctest --test-dir build --output-on-failure  # 结构单测（tests/test_hashtabl
 
 ## 12. 测试策略
 
-- **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + 轻量断言助手；不依赖 `assert`，Release/NDEBUG 下同样有效），CMake 各挂目标并注册 `ctest`。已就位：`tests/test_hashtable.cpp`（基本 / 冲突 / 扩容 / clear / 非拥有值 / 禁拷贝）。计划中：Heap（容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应编译失败）、LinkedList、Trie（clear 置空与循环边界）
+- **结构单测**：每个 core 结构一个 `tests/test_<结构>.cpp`（普通 main + 轻量断言助手；不依赖 `assert`，Release/NDEBUG 下同样有效），CMake 各挂目标并注册 `ctest`。已就位：`tests/test_hashtable.cpp`（基本 / 冲突 / 扩容 / clear / 非拥有值 / 禁拷贝）、`tests/test_recommender.cpp`（相似度 / 全序排序 / TopN / 冷启动）。计划中：LinkedList、Trie（clear 置空与循环边界）、Heap（容量 3 降序灌 10 → 弹出序 {10,9,8}；同值按 id 裁决；`Heap b = a;` 应编译失败）、Item、DataBase（§3.2-2）
 - **db 可直接单测**：listItems 等 db 方法不依赖 HTTP 即可调用验证（分层红利）
-- **接口测试**：`tests/test.sh` 自包含回归（用 `tests/metrace.json` 起临时服务端，210 项：CRUD、过滤排序分页、标签（含 `POST /api/tags` 契约与幂等）、种子加载语义、加载校验失败矩阵（值域/旧枚举名/id/时间戳 → fail-fast 且不改写文件）、`type` 白名单四值与未分类边界、落盘重启（写 → 杀进程 → 重启 → 读））；旧 `test_api.sh` 已删除。**2026-10-15 复核：210 项全绿**；持久化失败路径仍无测试（需构造不可写目录）
+- **接口测试**：`tests/test.sh` 自包含回归（用 `tests/metrace.json` 起临时服务端，225 项：CRUD、过滤排序分页、标签（含 `POST /api/tags` 契约与幂等）、相似推荐（冷启动 / 指定目标 / 404 / 截断）、种子加载语义、加载校验失败矩阵（值域/旧枚举名/id/时间戳 → fail-fast 且不改写文件）、`type` 白名单四值与未分类边界、落盘重启（写 → 杀进程 → 重启 → 读））；旧 `test_api.sh` 已删除。**2026-10-15 复核：225 项全绿**；持久化失败路径仍无测试（需构造不可写目录）
 - 压测（阶段 4）：1000 条下 listItems / recommend 响应时间
 
 ---
@@ -445,13 +452,14 @@ ctest --test-dir build --output-on-failure  # 结构单测（tests/test_hashtabl
 - [x] `ItemQuery/SortField/ItemQueryResult/TagQuery` 等落入 DataBase.h；`queryItem`（Top-N 堆，§9.4）/ getItem / updateItem / removeItem / createItem / `queryTag` 已实现（save 进锁内、`ItemResult`/`WriteStatus` 返回，2026-10-10）
 - [x] Router：/api/items 五路由 + GET /api/tags + 校验；写路径修复完成（POST/PUT 非抛解析、limit 契约截断、错误体统一，2026-10-06）；`type` 白名单已定为 `uncategorized`/`book`/`movie`/`music`（2026-10-08，不做创建/PUT 拆分）；POST /api/tags（body + 201）与 error/exception handler 完成、PUT/DELETE 状态码修正（2026-10-12）
 - [x] include 卫生：Router.h 前向声明（2026-10-09）、Router.cpp 自带 json、DataBase.h 补 `<cstddef>`、DataBase.cpp 补 `<filesystem>` 均已完成
-- [x] `tests/test.sh` 自包含回归 210 项全绿（2026-10-15，含 POST /api/tags 契约与"写 → 重启 → 读"落盘回归、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
+- [x] `tests/test.sh` 自包含回归 225 项全绿（2026-10-15，含 POST /api/tags 契约、相似推荐与"写 → 重启 → 读"落盘回归、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
 
 ### 阶段 3：算法功能（10.10~10.14，两人并行）
 
 - [x] A 线：HashTable（`template<typename V>`，id → `Item*`）实现并接入 getItem/updateItem/removeItem/createItem/load/clear；结构与链表同锁增删（2026-10-15，§9.5）
-- [ ] B 线：Recommender（相似 + 高分榜复用 Heap）+ `/api/recommend`；可选 Trie + `/api/search`
-- [ ] B 线 `tests/test_*.cpp`（A 线已交 `tests/test_hashtable.cpp`）；能指着代码讲结构与复杂度
+- [x] B 线：Recommender（相似 TopN + 冷启动评分榜，复用 Heap）与 `/api/recommend`（2026-10-15，§8.5）
+- [x] 单测就位：`tests/test_hashtable.cpp`、`tests/test_recommender.cpp`；能指着代码讲结构与复杂度
+- [ ] 可选：Trie 接入 `/api/search`、`/api/stats`
 - [x] 撤销/重做改由客户端 GUI 实现，服务端不再规划 `UndoStack` 与 `/api/undo`、`/api/redo`（2026-10-08 定，§8.4）
 
 ### 阶段 4：完善与验收（10.15~10.18）
@@ -474,7 +482,7 @@ HTTP 层共同维护；`Trie`（全局标签表）为已实现的共用结构。
 
 ## 15. 验收标准与演示
 
-- 服务独立启动、全部接口可用、数据重启不丢；`tests/test.sh` 全绿（210 项，2026-10-15）
+- 服务独立启动、全部接口可用、数据重启不丢；`tests/test.sh` 全绿（225 项，2026-10-15）
 - 手写结构有**真实调用方**（对应表见 §9.6），能现场解释与复杂度分析
 - 推荐可演示；撤销/重做在客户端演示；服务端讲解顺序建议：链表节点 → 淘汰堆与全序比较器 → 散列表与扩容 → 推荐
 - 能回答两个高频追问："为什么查询逻辑在 db 不在 Router"（锁边界）；"为什么不用平衡树做排序索引"（过滤组合使索引失效 + 规模账：千条排序微秒级）

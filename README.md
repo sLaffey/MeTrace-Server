@@ -4,7 +4,7 @@
 >
 > 《计算机科学与工程程序设计实践》课程设计项目。C/S 架构，服务端纯 C++ 实现，客户端 GUI 通过 HTTP + JSON 通信。
 
-一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、Trie、哈希表已实现并投入使用；推荐算法在开发计划中，见[开发进度](#开发进度)）。撤销/重做由客户端 GUI 本地实现（双栈在客户端），服务端只提供普通 CRUD。
+一个用来管理"书 / 影 / 音"收藏记录的 HTTP 服务：记录条目、打分、写短评、打标签，并在此之上提供相似推荐。数据以内存链表为主存，持久化采用单个 JSON 文件——存储方案为课设特意简化，重心放在数据结构与算法上（链表、堆、Trie、哈希表、推荐算法均为手写实现并投入使用）。撤销/重做由客户端 GUI 本地实现（双栈在客户端），服务端只提供普通 CRUD。
 
 ---
 
@@ -31,7 +31,7 @@
 - 标签系统：打标签时自动创建不存在的标签，条目与标签多对多关联
 - 组合过滤 + 排序 + 分页：按类型、标签筛选，按评分 / 日期 / 创建时间 / 标题排序；排序取 Top-N 采用手写淘汰堆，O(n log k)
 - 完整的参数校验与语义化状态码（400 / 404 / 500）
-- 手写数据结构承担主要业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表、**哈希表**（id 索引，链地址法 + 素数桶扩容）加速单查 / 改 / 删；**推荐算法**为计划项，见[开发进度](#开发进度)
+- 手写数据结构承担主要业务：**单链表**作主存储、**固定容量二叉堆**做 Top-N 排序、**Trie** 作全局标签表、**哈希表**（id 索引，链地址法 + 素数桶扩容）加速单查 / 改 / 删、**推荐算法**（扫描打分 + 淘汰堆 TopN）提供相似推荐
 - 撤销/重做归客户端：服务端不设 `/api/undo`、`/api/redo`，只保证写请求原子并回传完整 after 态，供客户端双栈回放
 - 原子落盘：写操作先写临时文件再 rename，中途崩溃不会损坏数据文件
 - 线程安全：httplib 线程池并发处理请求，数据访问通过单一互斥锁串行化
@@ -112,10 +112,13 @@ curl -X PUT http://127.0.0.1:8000/api/items/1 \
   -H 'Content-Type: application/json' \
   -d '{"progress":1,"score":98}'
 
-# 新增标签（同名幂等；相似推荐 /api/recommend 尚在计划中）
+# 新增标签（同名幂等）
 curl -X POST http://127.0.0.1:8000/api/tags \
   -H 'Content-Type: application/json' \
   -d '{"name":"科幻"}'
+
+# 和《三体》相似的条目（item_id 缺省时返回全局高分榜）
+curl 'http://127.0.0.1:8000/api/recommend?item_id=1&topN=5'
 
 # 删除
 curl -i -X DELETE http://127.0.0.1:8000/api/items/1
@@ -123,7 +126,7 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 
 ### 接口测试
 
-`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）、`POST /api/tags` 契约与启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 210 项断言（含"写 → 重启 → 读"落盘回归），2026-10-15 复核全绿。
+`tests/test.sh` 是自包含的回归测试：用 `tests/metrace.json`（21 条种子数据，含 1 条"未分类"，已纳入版本控制）在临时目录里起一个服务端，跑完断言后自动关停，无需手动准备环境；覆盖接口行为、种子加载语义（幽灵标签丢弃、tags 排序去重、`uncategorized` 取值）、`POST /api/tags` 契约与启动行为（文件缺失按空库启动；文件损坏或字段非法一律 fail-fast 拒绝启动，且不改写数据文件），共 225 项断言（含相似推荐与"写 → 重启 → 读"落盘回归），2026-10-15 复核全绿。
 
 ```bash
 ./tests/test.sh                                 # 依赖 curl 与 jq
@@ -131,7 +134,7 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 ./tests/test.sh --server ./build/bin/server --port 18000
 ```
 
-结构单测：`cmake --build build && ctest --test-dir build --output-on-failure`（当前：HashTable；LinkedList/Trie/Heap 计划中）。
+结构单测：`cmake --build build && ctest --test-dir build --output-on-failure`（当前：HashTable、Recommender；其余计划中）。
 
 ---
 
@@ -196,11 +199,11 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | DELETE | `/api/items/{id}` | 删除条目 | — | `204`（无 body） |
 | GET | `/api/tags` | 标签列表 | `?limit=&offset=` | `{"total":N,"tags":["科幻",...]}` |
 | POST | `/api/tags` | 新增标签 | `{"name":"科幻"}`，同名幂等 | `201` + `{"name":"科幻"}` |
-| GET | `/api/recommend` | 相似推荐（计划，未实现） | `?item_id=&topN=` | `{"items":[Item,...]}` |
+| GET | `/api/recommend` | 相似推荐 | `?item_id=&topN=` | `{"items":[Item,...]}` |
 
 > **撤销/重做不在服务端**：双栈由客户端 GUI 实现，服务端不提供对应接口；客户端回放所需的契约（完整 after 态、DELETE 无 body、只读 id）见下文「撤销/重做（客户端实现）」小节。
 >
-> 计划中：`/api/recommend`（相似推荐）、`/api/search`（前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
+> 计划中：`/api/search`（前缀搜索）、`/api/stats`（统计聚合），见 [开发进度](#开发进度)。
 
 ### 查询参数
 
@@ -214,7 +217,7 @@ HTTP 状态码本身即语义，body 中不再重复 `code` 字段：
 | `item_id` | 条目 id | `/api/recommend` 缺省时返回全局高分榜（冷启动兜底） |
 | `topN` | 正整数，默认 10，上限 50 | 推荐条数 |
 
-取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit` 数值越界静默截断到 1~100，`offset` 为负返回 400。
+取值非法（例如 `type=game`、`sort=unknown`）一律返回 400，而不是静默忽略；`limit` 数值越界静默截断到 1~100，`offset` 为负返回 400；相似推荐里 `item_id` 指向不存在的条目返回 404，`topN` 非数字返回 400、数值越界静默截断到 1~50。
 
 ### 数据模型
 
@@ -411,13 +414,13 @@ httplib 默认用线程池并发处理请求，而内存链表不是线程安全
 |---|---|---|---|
 | 单链表 `LinkedList` | 已实现 | 头插 O(1)，按 id 查找/删除 O(n) | 全部条目的主存储，所有 CRUD 在链表上进行 |
 | 二叉堆 `Heap` | 已实现 | push/pop O(log n)；固定容量，满员自动淘汰最差 | 列表排序与高分榜的 Top-N，O(n log k) |
-| 推荐算法 `Recommender` | 计划 | 遍历打分 O(n·k)，或图共同邻居 O(V+E) | 相似推荐；冷启动高分榜复用堆 |
+| 推荐算法 `Recommender` | 已实现 | 扫描打分 O(n·k) + 淘汰堆 TopN；同分按评分、未评最后 | 相似推荐；冷启动高分榜复用堆 |
 | 前缀树 `Trie` | 已实现 | 插入 / 查询 / 删除 O(L)，有序枚举 | 全局标签表：查重、有序列表、落盘收集；可选接入前缀搜索 |
 | 哈希表 `HashTable` | 已实现 | 链地址法，平均 O(1)，负载因子 >0.75 素数扩容（重挂） | id → 条目索引，加速单查 / 改 / 删（服务端第四个结构） |
 
 Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素只与堆顶比较，整趟扫描 O(n log k)；比较器以 id 做全序兜底，保证分页不重不漏。
 
-服务端手写结构为 **LinkedList / Trie / Heap / HashTable 四个**（均已实现并投入使用），另加 **Recommender** 算法（待实施，见上表状态）；**撤销/重做的双栈在客户端 GUI**，不计入服务端结构账。
+服务端手写结构为 **LinkedList / Trie / Heap / HashTable 四个**（均已实现并投入使用），另加 **Recommender** 算法（已实现）；**撤销/重做的双栈在客户端 GUI**，不计入服务端结构账。
 
 ---
 
@@ -435,7 +438,7 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] load 值域校验（`type` 白名单、title/score/progress/tags、id 唯一性、时间戳）：fail-fast、不做迁移，已实现（2026-10-09）
 - [x] Item 序列化全字段与服务端字段口子（id/时间戳自动管理）；LinkedList 遍历/查找/计数/clear
 - [x] 互斥锁、写操作锁内落盘、`load` 原子化（暂存 + 提交）（2026-10-10~13）
-- [x] 修复加载丢标签、写路径二次加锁、缺文件未设 `db_path`；Trie `clear` 置空与循环回绕修复；`tests/test.sh` 扩到 210 项全绿（2026-10-15）
+- [x] 修复加载丢标签、写路径二次加锁、缺文件未设 `db_path`；Trie `clear` 置空与循环回绕修复；`tests/test.sh` 扩到 225 项全绿（2026-10-15）
 
 ### 阶段 2：HTTP CRUD（进行中）
 
@@ -444,13 +447,13 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 - [x] `type` 白名单定为 `uncategorized`（未分类）/`book`/`movie`/`music`，未分类可显式创建；POST 的 `type` 必填（2026-10-08）
 - [x] PUT body 解析修复、`limit` 契约截断 1~100（`limit=0` 曾致服务崩溃）、`/` 回 text/plain
 - [x] POST `/api/tags`（body `{"name":...}` + 201）与 error/exception handler、PUT/DELETE 状态码修正（2026-10-12）
-- [x] `tests/test.sh` 自包含回归 210 项全绿（2026-10-15，含 POST /api/tags 契约与落盘重启、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
+- [x] `tests/test.sh` 自包含回归 225 项全绿（2026-10-15，含 POST /api/tags 契约、相似推荐与落盘重启、未分类与加载校验矩阵）；旧 `test_api.sh` 已删除
 
 ### 阶段 3：HashTable 索引与推荐（10.10~10.14）
 
 - [x] `HashTable`（id → `Item*` 索引）实现并接入单查 / 改 / 删（2026-10-15）
-- [ ] `Recommender` + `/api/recommend`
-- [ ] 可选：Trie 接入 `/api/search`
+- [x] `Recommender` + `/api/recommend`（相似 TopN + 冷启动评分榜，2026-10-15）
+- [ ] 可选：`/api/search`、`/api/stats`
 
 > 撤销/重做改由客户端 GUI 实现，服务端不再规划 `UndoStack` 与 `/api/undo`、`/api/redo`（2026-10-08 定）。
 
@@ -498,7 +501,7 @@ JSON 解析失败、字段缺失或字段值非法（未知 `type`、`score`/`pr
 
 **服务端为什么不提供 `/api/undo`？**
 
-按课设的结构盘点（见 [数据结构与算法](#数据结构与算法)），服务端的手写结构是 LinkedList / Trie / Heap / HashTable 四个（HashTable 待实施）；撤销/重做的双栈放在客户端 GUI 侧，那里有真实调用方。服务端只保证写请求原子、回传完整 after 态，并让 `DELETE` 保持 204 无 body。
+按课设的结构盘点（见 [数据结构与算法](#数据结构与算法)），服务端的手写结构是 LinkedList / Trie / Heap / HashTable 四个（均已实现并投入使用），另加 Recommender 推荐算法；撤销/重做的双栈放在客户端 GUI 侧，那里有真实调用方。服务端只保证写请求原子、回传完整 after 态，并让 `DELETE` 保持 204 无 body。
 
 **`GET /api/items/abc` 为什么返回 404 而不是 400？**
 
