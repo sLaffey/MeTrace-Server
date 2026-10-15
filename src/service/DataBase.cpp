@@ -10,6 +10,7 @@
 
 #include "core/LinkedList.h"
 #include "core/Heap.h"
+#include "core/Recommender.h"
 #include "service/DataBase.h"
 
 namespace metrace::service {
@@ -407,6 +408,33 @@ const TagQueryResult DataBase::queryTag(const TagQuery& query) const
         }
     });
     return res;
+}
+
+/// @brief 相似推荐：score = 3×共同标签数 + 2×同作者 + 1×同类型（§8.5）
+/// @param query item_id 缺省 = 冷启动评分榜；top_n 已由 Router 截断
+/// @return nullopt = 指定 item_id 不存在；空 vector = 合法空结果
+std::optional<std::vector<const metrace::core::Item*>> DataBase::recommend(const RecommendQuery& query) const
+{
+    std::lock_guard<std::mutex> lock(mtx);
+
+    const metrace::core::Item* target = nullptr;
+    if (query.item_id.has_value()) {
+        metrace::core::Item* const* found = item_index.find(query.item_id.value());
+        if (found == nullptr) {
+            return std::nullopt;
+        }
+        target = *found;
+    }
+
+    std::vector<const metrace::core::Item*> candidates;
+    candidates.reserve(items.getSize());
+    items.forEach([&candidates, target](const metrace::core::Item& item) {
+        if (&item != target) { // 响应不含条目自身
+            candidates.push_back(&item);
+        }
+    });
+
+    return metrace::core::recommendTopN(candidates, target, query.top_n);
 }
 
 } // namespace metrace::service
