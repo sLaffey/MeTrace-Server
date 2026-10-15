@@ -95,6 +95,19 @@ elseif(NOT METRACE_IPO_SUPPORTED)
     message(STATUS "IPO/LTO 不可用，已跳过: ${METRACE_IPO_ERROR}")
 endif()
 
+# ---------- 测试 ----------
+# 结构单测：普通 main + 轻量断言助手（与 server 同标准，目标零警告）
+add_executable(test_hashtable tests/test_hashtable.cpp)
+target_include_directories(test_hashtable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(MSVC)
+    target_compile_options(test_hashtable PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(test_hashtable PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+enable_testing()
+add_test(NAME test_hashtable COMMAND test_hashtable)
+
 # ---------- 安装 / 打包 ----------
 include(GNUInstallDirs)
 install(TARGETS server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
