@@ -7,6 +7,7 @@
 #include <cstddef>
 
 #include "core/LinkedList.h"
+#include "core/HashTable.h"
 #include "core/Item.h"
 #include "core/Tag.h"
 #include "core/Trie.h"
@@ -69,6 +70,7 @@ class DataBase {
 private:
     int next_id = 1;
     metrace::core::LinkedList<metrace::core::Item> items;
+    metrace::core::HashTable<metrace::core::Item*> item_index; ///< id → Item*（指向 items 节点内部），与链表在同一把锁内同步维护
     metrace::core::Trie tags;
 
     std::string db_path;
