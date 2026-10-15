@@ -51,6 +51,7 @@
 - [x] `HashTable`（2026-10-15 实现并接入）：链地址法 + 除法散列 + 素数桶（17 起步、约 2x 扩容）+ 负载因子 0.75 重挂；**不拥有值**（存 `Item*`）；id → `Item*` 索引接入 `getItem/updateItem/removeItem/createItem` 与 `load/clear`，与链表同锁同步（§9.5）；单测 `tests/test_hashtable.cpp`
 - [x] `Recommender`（2026-10-15 实现并接入）：相似度 `3×共同标签 + 2×同作者 + 1×同类型`；全序比较器（相似度→评分→id）复用淘汰堆取 TopN；`GET /api/recommend`（缺省冷启动评分榜、目标不存在 404、topN 截断 [1,50]）；扫描 O(n·k) 不建图（§8.5）；单测 `tests/test_recommender.cpp`
 - [x] `/api/search` + `/api/stats`（2026-10-15）：标题前缀搜索（复用 `queryItem` 管线 + 必填非空 `q`，不依赖 Trie）；统计聚合（`total`/`by_type`/`score_dist`，`type` 过滤只影响 total 与分布）
+- [x] 演示材料（2026-10-15）：`scripts/seed_data.json`（40 条演示数据：书 17 / 影 13 / 音 10，23 个标签）+ `scripts/demo.sh`（自包含起停 + 逐接口演示，含推荐/搜索/统计/错误语义/撤销删除契约）
 - [x] `DataBase`：
   - 锁：`mutex` + "公有入口加锁、私有 `*Unlocked` 实现"拆分（2026-10-13）；写方法统一调 `saveUnlocked`（2026-10-15）
   - `load`：**暂存 + 提交两段式**——全部解析/校验进暂存区 `StagedData`（vector<Item> + vector<Tag> + next_id），成功后 `clearUnlocked()` + 逐条复制装入；失败不触碰现状（2026-10-13）；幽灵过滤查暂存表、缺文件分支清空并设 `db_path`（2026-10-15 修复）
@@ -66,7 +67,7 @@
 ### 3.2 待办（按优先级，2026-10-15 核对；缺陷与单测缺口均已清）
 
 1. `offset` 解析在 long long→size_t 收窄前补上限检查（§8.3）；
-2. 阶段 4：50~100 条演示数据与 1000 条压测；`scripts/demo.sh` 自包含演示脚本；
+2. 阶段 4：1000 条压测（演示数据与演示脚本已交：`scripts/seed_data.json` + `scripts/demo.sh`，2026-10-15）；
 3. 可选加固：持久化失败路径测试（需构造不可写目录）；标签改名接口暂缓（§17）。
 
 > 修复记录：2026-10-06 审查的写路径问题（updateItem 的 touch/registerTags、POST 非抛解析/必填闸门/类型谓词、tags 与 score 校验、错误体统一）已修；同日晚二次修复 PUT 解析/limit 截断/拷贝赋值/text-plain。GET /api/tags 响应键已拍板以代码为准（`tags`），契约回改见 §8.2。~~`getCreatedAt()` 返回 `time_t` 与 int64_t 存储不一致~~（已统一为 `std::int64_t`，过时划去）。
@@ -119,7 +120,10 @@ MeTrace-Server/
 │   ├── core/{Item,Trie}.cpp     # ✓
 │   ├── service/DataBase.cpp     # ✓ 原子 load/锁/落盘 + id 索引 + recommend（2026-10-15 复核）
 │   └── http/Router.cpp          # ✓ 十路由（items/tags/recommend/search/stats）+ 校验 + error/exception handler
-├── scripts/{build.sh,run.sh}
+├── scripts/
+│   ├── build.sh / run.sh
+│   ├── demo.sh                  # 自包含起停 + 逐接口演示（curl + jq）
+│   └── seed_data.json           # 演示数据（40 条：书 17 / 影 13 / 音 10，23 标签）
 ├── tests/
 │   ├── test.sh                  # ✓ 自包含回归（curl + jq，249 项；2026-10-15 全绿）
 │   ├── metrace.json             # ✓ 测试种子数据（21 条，含 1 条 uncategorized）
@@ -421,6 +425,7 @@ main.cpp → http/Router.h → service/DataBase.h → core/*.h → <标准库/�
 ./scripts/run.sh --port 9000 --db /tmp/demo.json
 ./tests/test.sh                           # 自包含回归：自动起停临时服务端（curl + jq）
 ctest --test-dir build --output-on-failure  # 结构单测（tests/test_hashtable.cpp 等）
+./scripts/demo.sh                         # 一键演示：临时实例 + 40 条演示数据，逐接口走一遍
 ```
 
 - CMake：GLOB_RECURSE 收集 `src/*.cpp`（CONFIGURE_DEPENDS，新增文件免改构建；Makefile/Ninja 生成器下生效）；`-Wall -Wextra -Wpedantic`，**目标零警告**；Release 下 LTO
@@ -472,7 +477,8 @@ ctest --test-dir build --output-on-failure  # 结构单测（tests/test_hashtabl
 
 ### 阶段 4：完善与验收（10.15~10.18）
 
-- [ ] 50~100 条演示数据 `scripts/seed_data.json`；1000 条压测
+- [x] 演示数据 `scripts/seed_data.json`（40 条）与 `scripts/demo.sh` 一键演示（2026-10-15）
+- [ ] 1000 条压测
 - [ ] 文档核对（2026-10-15 已按当前代码更新一轮）；演示视频与讲稿；人均码量核查
 
 ---

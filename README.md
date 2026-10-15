@@ -141,6 +141,16 @@ curl -i -X DELETE http://127.0.0.1:8000/api/items/1
 
 结构单测：`cmake --build build && ctest --test-dir build --output-on-failure`（7 个目标：LinkedList / Trie / Heap / HashTable / Recommender / Item / DataBase）。
 
+### 一键演示
+
+```bash
+./scripts/demo.sh                               # 临时实例 + 40 条演示数据，逐接口演示后自动清理
+./scripts/demo.sh --port 9000                   # 指定端口
+./scripts/demo.sh --url http://127.0.0.1:8000   # 对已运行的服务端演示
+```
+
+演示内容：健康检查 → 列表过滤/排序/分页 → 单条读取 → 标签（列表/新增）→ 标题搜索 → 相似推荐（指定目标 / 冷启动）→ 统计聚合 → 错误语义（400/404）→ 写路径与"撤销删除 = 新 id"契约。
+
 ---
 
 ## 配置
@@ -397,7 +407,9 @@ MeTrace-Server/
 ├── src/                         # 与 include/ 一一对应的实现 + main.cpp
 ├── scripts/
 │   ├── build.sh
-│   └── run.sh
+│   ├── run.sh
+│   ├── demo.sh                  # 一键演示（自包含起停 + 逐接口走一遍）
+│   └── seed_data.json           # 演示数据（40 条：书 / 影 / 音 + 23 标签）
 ├── tests/
 │   ├── test.sh                  # 自包含回归测试（自动起停服务端，curl + jq）
 │   └── metrace.json             # 测试种子数据（21 条，含 1 条 uncategorized，已纳入版本控制）
@@ -465,7 +477,7 @@ Top-N 采用**淘汰堆**：堆顶始终是当前候选中最差者，新元素�
 
 ### 阶段 4：完善与验收（10.15~10.18）
 
-- [ ] 50~100 条演示数据
+- [x] 演示数据（40 条）与一键演示脚本 `scripts/demo.sh`（2026-10-15）
 - [ ] 性能测试（1000 条数据下的推荐与列表响应时间）
 - [ ] 演示视频与讲稿
 
